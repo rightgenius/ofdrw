@@ -875,19 +875,32 @@ public class OpenPdfMaker {
 
         // Use fontbox TTF parse to validate the font and read its OS/2 table.
         // The TTF parse also surfaces issues that would otherwise corrupt the PDF.
-        try (TrueTypeFont ttf = getTrueTypeFont(ctFont, fontPath)) {
-            if (ttf == null || ttf.getOS2Windows() == null) {
-                logger.debug("Font missing OS/2 Windows table, falling back: {}",
-                        fontPath.getFileName());
+        // .ttc (TrueType Collection) — 自研 TrueTypeFont 解析器只读单一 TTF,
+        // 不读 TTC 头,跳过 in-house 验证;OpenPDF 自身能读 TTC (只要路径加 ",0")。
+        if (!fontPath.toString().toLowerCase().endsWith(".ttc")) {
+            try (TrueTypeFont ttf = getTrueTypeFont(ctFont, fontPath)) {
+                if (ttf == null || ttf.getOS2Windows() == null) {
+                    logger.debug("Font missing OS/2 Windows table, falling back: {}",
+                            fontPath.getFileName());
+                    return defaultFont;
+                }
+            } catch (Exception e) {
+                logger.warn("Failed to parse font {}: {}", fontPath, e.getMessage());
                 return defaultFont;
             }
-        } catch (Exception e) {
-            logger.warn("Failed to parse font {}: {}", fontPath, e.getMessage());
-            return defaultFont;
         }
 
         try {
-            return BaseFont.createFont(fontPath.toAbsolutePath().toString(),
+            // OpenPDF 1.3.39 单独用 .ttc 路径 + IDENTITY_H 会抛 "Font 'X.ttc' is
+            // not recognized"；它支持的子字体索引语法是路径后追加 `,0` (subfont 0)。
+            // 见 com.lowagie.text.pdf.TrueTypeFont.getTTCName。
+            // 对 .ttf/.otf 路径无影响 (indexOf(".ttc,") < 0 时 getTTCName 原样返回)。
+            String openPdfPath = fontPath.toAbsolutePath().toString();
+            String lower = openPdfPath.toLowerCase();
+            if (lower.endsWith(".ttc") && lower.indexOf(".ttc,") < 0) {
+                openPdfPath = openPdfPath + ",0";
+            }
+            return BaseFont.createFont(openPdfPath,
                     BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
         } catch (Exception e) {
             logger.warn("BaseFont.createFont failed for {}: {}", fontPath, e.getMessage());

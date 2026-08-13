@@ -64,7 +64,7 @@ public final class FontLoader {
      * 默认字体
      */
     private static TrueTypeFont defaultFont;
-    private static com.itextpdf.io.font.TrueTypeFont iTextDefaultFont;
+    private static com.itextpdf.io.font.FontProgram iTextDefaultFont;
 
     /**
      * 默认字体路径
@@ -197,13 +197,29 @@ public final class FontLoader {
         addSimilarFontReplaceRegexMapping(".*Song.*", "宋体");
         addSimilarFontReplaceRegexMapping(".*MinionPro.*", "SimSun");
 
+        // macOS 上 .ttc 子字体在 AWT 中报告的是中文字族名 (冬青黑体简体中文 W3 / 黑体-繁 细体),
+        // 上面那套宋体/楷体/SimSun 全是 Windows 命名,Mac 全 miss,
+        // 导致 init() 走 "字体映射里第一个" 兜底逻辑,被字母序靠前的 Trattatello
+        // (意大利装饰字体) 截胡。补 Mac CJK 别名/正则,让 OFD 里的宋体/黑体能
+        // 命中冬青黑体简体或华文黑体。
+        addAliasMapping("宋体", "冬青黑体简体中文 W3");
+        addAliasMapping("黑体", "黑体-繁 细体");
+        addAliasMapping("STHeiti-Light", "黑体-繁 细体");
+        addAliasMapping("STHeiti", "黑体-繁 细体");
+        addSimilarFontReplaceRegexMapping(".*冬青黑.*", "冬青黑体简体中文 W3");
+        addSimilarFontReplaceRegexMapping(".*Hiragino.*", "冬青黑体简体中文 W3");
+        addSimilarFontReplaceRegexMapping(".*Heiti.*", "黑体-繁 细体");
+        addSimilarFontReplaceRegexMapping(".*STHeiti.*", "黑体-繁 细体");
+
         /*
          * 默认字体 选择
          *
          * 默认选择宋体 或 衬体
          */
         String[] arr = new String[]{
-                "宋体", "楷体", "仿宋", "STHeiti-Light" /* MAC OS默认字体 */
+                "宋体", "楷体", "仿宋", "STHeiti-Light" /* MAC OS默认字体 */,
+                // macOS 实际注册的中文字族名,作为最后兜底
+                "冬青黑体简体中文 W3", "黑体-繁 细体", "黑体-繁 中等"
         };
         String defFt = null;
         for (String name : arr) {
@@ -239,11 +255,28 @@ public final class FontLoader {
         if (DEBUG) {
             log.info("尝试加载为默认字体：{}", path);
         }
+        if (path == null) {
+            return false;
+        }
+        Path loc = Paths.get(path);
         InputStream in = null;
         try {
-            Path loc = Paths.get(path);
             in = Files.newInputStream(loc);
             byte[] buf = IOUtils.toByteArray(in);
+            String lower = path.toLowerCase();
+            if (lower.endsWith(".ttc")) {
+                // TrueType Collection — 自研 TrueTypeFont 解析器不读 TTC 头,
+                // 跳过 in-house 验证,但 iText IO 路径下要用 ItextFontUtil.loadFontProgram
+                // (它走 TrueTypeCollection + FontProgramFactory.createFont(buf, 0))
+                // 才能拿到子字体 0 的 FontProgram;OpenPDF 路径下会自己加 ",0"。
+                DefaultFontPath = loc;
+                defaultFont = null;
+                iTextDefaultFont = ItextFontUtil.loadFontProgram(path);
+                if (DEBUG) {
+                    log.info("TTC 字体作为默认: {} (子字体 0, iText=TrueTypeCollection, OpenPDF=',0')", path);
+                }
+                return true;
+            }
             DefaultFontPath = loc;
             defaultFont = new TrueTypeFont().parse(buf);
             // 使用统一的工具类加载iText字体，对裁剪字体进行兼容
@@ -940,7 +973,7 @@ public final class FontLoader {
      *
      * @return 字体
      */
-    public com.itextpdf.io.font.TrueTypeFont getITextDefaultFont() {
+    public com.itextpdf.io.font.FontProgram getITextDefaultFont() {
         return iTextDefaultFont;
     }
 
