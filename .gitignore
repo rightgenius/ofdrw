@@ -38,3 +38,9 @@ ofdrw-sign/target/
 ofdrw-full/target/
 target
 .vscode
+
+### macOS ###
+.DS_Store
+
+### Local test scratch (do not commit) ###
+/ofdrw-reader/DOC_0_copy/
