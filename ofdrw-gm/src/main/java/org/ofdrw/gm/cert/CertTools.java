@@ -19,7 +19,7 @@ import java.security.cert.CertificateException;
  */
 public final class CertTools {
     static {
-        Security.addProvider(new BouncyCastleProvider());
+        Security.addProvider(org.ofdrw.gm.GmProviders.bouncyCastle());
     }
 
     /**

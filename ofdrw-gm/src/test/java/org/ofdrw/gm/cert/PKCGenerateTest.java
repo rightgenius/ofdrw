@@ -108,7 +108,7 @@ class PKCGenerateTest {
      */
     @Test
     public void testLoadPEM() throws IOException, GeneralSecurityException {
-        Security.addProvider(new BouncyCastleProvider());
+        Security.addProvider(org.ofdrw.gm.GmProviders.bouncyCastle());
         Path certPemFile = Paths.get("src/test/resources", "sign_cert.pem");
         Path keyPemFile = Paths.get("src/test/resources", "sign_key.pem");
         try (final InputStream certOut = Files.newInputStream(certPemFile);

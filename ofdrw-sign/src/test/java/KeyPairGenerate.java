@@ -13,7 +13,7 @@ public class KeyPairGenerate {
         // 获取SM2椭圆曲线的参数
         final ECGenParameterSpec sm2Spec = new ECGenParameterSpec("sm2p256v1");
         // 获取一个椭圆曲线类型的密钥对生成器
-        final KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC", new BouncyCastleProvider());
+        final KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC", org.ofdrw.gm.GmProviders.bouncyCastle());
         // 使用SM2参数初始化生成器
         kpg.initialize(sm2Spec);
 

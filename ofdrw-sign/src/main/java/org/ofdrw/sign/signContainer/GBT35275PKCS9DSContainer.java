@@ -96,7 +96,7 @@ public class GBT35275PKCS9DSContainer implements ExtendSignatureContainer {
         // e) 根据签名方案，使用操作人签名的私钥对杂凑值进行数字签名
         Signature signatureFnc = Signature.getInstance(
                 GMObjectIdentifiers.sm2sign_with_sm3.toString(),
-                new BouncyCastleProvider());
+                org.ofdrw.gm.GmProviders.bouncyCastle());
         signatureFnc.initSign(prvKey);
         byte[] plaintext = IOUtils.toByteArray(inData);
         // 执行签名产生签名值

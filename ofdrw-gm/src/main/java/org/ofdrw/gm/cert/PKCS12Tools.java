@@ -46,7 +46,7 @@ public class PKCS12Tools {
      */
     public static PrivateKey ReadPrvKey(InputStream rootKsIn, String pwd)
             throws GeneralSecurityException, IOException {
-        KeyStore ks = KeyStore.getInstance("PKCS12", new BouncyCastleProvider());
+        KeyStore ks = KeyStore.getInstance("PKCS12", org.ofdrw.gm.GmProviders.bouncyCastle());
         ks.load(rootKsIn, pwd.toCharArray());
         String alias = ks.aliases().nextElement();
         return (PrivateKey) ks.getKey(alias, pwd.toCharArray());
@@ -82,7 +82,7 @@ public class PKCS12Tools {
      */
     public static PrivateKey ReadPrvKey(InputStream rootKsIn, String alias, String pwd)
             throws GeneralSecurityException, IOException {
-        KeyStore ks = KeyStore.getInstance("PKCS12", new BouncyCastleProvider());
+        KeyStore ks = KeyStore.getInstance("PKCS12", org.ofdrw.gm.GmProviders.bouncyCastle());
         ks.load(rootKsIn, pwd.toCharArray());
         return (PrivateKey) ks.getKey(alias, pwd.toCharArray());
     }
@@ -98,7 +98,7 @@ public class PKCS12Tools {
      */
     public static Certificate[] ReadCertChain(InputStream rootKsIn, String pwd)
             throws GeneralSecurityException, IOException {
-        KeyStore ks = KeyStore.getInstance("PKCS12", new BouncyCastleProvider());
+        KeyStore ks = KeyStore.getInstance("PKCS12", org.ofdrw.gm.GmProviders.bouncyCastle());
         ks.load(rootKsIn, pwd.toCharArray());
         String alias = ks.aliases().nextElement();
         return ks.getCertificateChain(alias);
@@ -149,7 +149,7 @@ public class PKCS12Tools {
      */
     public static Certificate[] ReadCertChain(InputStream rootKsIn, String alias, String pwd)
             throws GeneralSecurityException, IOException {
-        KeyStore ks = KeyStore.getInstance("PKCS12", new BouncyCastleProvider());
+        KeyStore ks = KeyStore.getInstance("PKCS12", org.ofdrw.gm.GmProviders.bouncyCastle());
         ks.load(rootKsIn, pwd.toCharArray());
         return ks.getCertificateChain(alias);
     }

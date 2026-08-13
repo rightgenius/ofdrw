@@ -48,7 +48,7 @@ class SES_SignatureTest {
         Certificate useCert = PKCS12Tools.ReadUserCert(userP12, "private", "777777");
         PrivateKey prvKey = PKCS12Tools.ReadPrvKey(userP12, "private", "777777");
 
-        Signature sg = Signature.getInstance("SM3WithSM2", new BouncyCastleProvider());
+        Signature sg = Signature.getInstance("SM3WithSM2", org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initSign(prvKey);
         sg.update(toSign.getEncoded("DER"));
         final byte[] sigVal = sg.sign();
@@ -91,7 +91,7 @@ class SES_SignatureTest {
 
         Signature sg = Signature.getInstance(
                 sesSignature.getSignatureAlgID().toString()
-                , new BouncyCastleProvider());
+                , org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initVerify(certificate);
         sg.update(toSign.getEncoded("DER"));
         byte[] sigVal = sesSignature.getSignature().getBytes();

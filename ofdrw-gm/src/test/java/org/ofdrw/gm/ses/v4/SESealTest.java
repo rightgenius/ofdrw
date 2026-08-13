@@ -34,7 +34,7 @@ class SESealTest {
         Path sealerPath = Paths.get("src/test/resources", "SealBuilder.p12");
 
         PrivateKey sealerPrvKey = PKCS12Tools.ReadPrvKey(sealerPath, "private", "777777");
-        Signature sg = Signature.getInstance("SM3WithSM2", new BouncyCastleProvider());
+        Signature sg = Signature.getInstance("SM3WithSM2", org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initSign(sealerPrvKey);
         sg.update(new byte[32]);
         byte[] sigVal = sg.sign();
@@ -42,7 +42,7 @@ class SESealTest {
 
         Certificate certificate = PKCS12Tools.ReadUserCert(sealerPath, "private", "777777");
 
-        sg = Signature.getInstance("SM3WithSM2", new BouncyCastleProvider());
+        sg = Signature.getInstance("SM3WithSM2", org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initVerify(certificate);
         sg.update(new byte[32]);
         assertTrue(sg.verify(sigVal), "SM2签名验证失败");
@@ -87,7 +87,7 @@ class SESealTest {
                 .setPicture(pictrueInfo);
 
         PrivateKey sealerPrvKey = PKCS12Tools.ReadPrvKey(sealerPath, "private", "777777");
-        Signature sg = Signature.getInstance("SM3WithSM2", new BouncyCastleProvider());
+        Signature sg = Signature.getInstance("SM3WithSM2", org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initSign(sealerPrvKey);
         sg.update(sesSealInfo.getEncoded("DER"));
         byte[] sigVal = sg.sign();
@@ -119,7 +119,7 @@ class SESealTest {
         SES_SealInfo ses_sealInfo = seal.geteSealInfo();
 
         Signature sg = Signature.getInstance(seal.getSignAlgID().toString()
-                , new BouncyCastleProvider());
+                , org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initVerify(certificate);
         sg.update(ses_sealInfo.getEncoded());
         byte[] sigVal = seal.getSignedValue().getBytes();

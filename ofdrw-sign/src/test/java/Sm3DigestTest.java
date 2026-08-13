@@ -47,12 +47,12 @@ public class Sm3DigestTest {
         Certificate cert = PKCS12Tools.ReadUserCert(path, "private", "777777");
         PrivateKey prv = PKCS12Tools.ReadPrvKey(path, "private", "777777");
 
-        Signature sg = Signature.getInstance("SM3WithSM2", new BouncyCastleProvider());
+        Signature sg = Signature.getInstance("SM3WithSM2", org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initSign(prv);
         sg.update(new byte[32]);
         final byte[] sign = sg.sign();
 
-        sg = Signature.getInstance("SM3WithSM2", new BouncyCastleProvider());
+        sg = Signature.getInstance("SM3WithSM2", org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initVerify(cert);
         sg.update(new byte[32]);
         Assertions.assertTrue(sg.verify(sign));
@@ -69,12 +69,12 @@ public class Sm3DigestTest {
 
         byte[] data = Files.readAllBytes(testFile);
 
-        Signature sg = Signature.getInstance("SM3WithSM2", new BouncyCastleProvider());
+        Signature sg = Signature.getInstance("SM3WithSM2", org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initSign(prv);
         sg.update(data);
         byte[] sign = sg.sign();
 
-        sg = Signature.getInstance("SM3WithSM2", new BouncyCastleProvider());
+        sg = Signature.getInstance("SM3WithSM2", org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initVerify(cert);
         sg.update(data);
         Assertions.assertTrue(sg.verify(sign), "SM2签名验证应通过");

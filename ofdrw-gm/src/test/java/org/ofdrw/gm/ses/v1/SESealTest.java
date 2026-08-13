@@ -30,7 +30,7 @@ import java.util.UUID;
 public class SESealTest {
 
     static {
-        Security.addProvider(new BouncyCastleProvider());
+        Security.addProvider(org.ofdrw.gm.GmProviders.bouncyCastle());
     }
 
 
@@ -129,7 +129,7 @@ public class SESealTest {
         v.add(cert);
         v.add(signInfo.getSignatureAlgorithm());
 
-        Signature sg = Signature.getInstance("SM3WithSM2", new BouncyCastleProvider());
+        Signature sg = Signature.getInstance("SM3WithSM2", org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initVerify(certificate);
         sg.update(new DERSequence(v).getEncoded("DER"));
         byte[] sigVal = signInfo.getSignData().getBytes();

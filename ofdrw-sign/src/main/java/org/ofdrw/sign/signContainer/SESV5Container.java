@@ -82,7 +82,7 @@ public class SESV5Container implements ExtendSignatureContainer {
                 .setPropertyInfo(propertyInfo);
 
         // 签章签名 = Sign(TBS_Sign)
-        Signature sg = Signature.getInstance("SM3WithSM2", new BouncyCastleProvider());
+        Signature sg = Signature.getInstance("SM3WithSM2", org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initSign(privateKey);
         sg.update(toSign.getEncoded("DER"));
         final byte[] sigVal = sg.sign();

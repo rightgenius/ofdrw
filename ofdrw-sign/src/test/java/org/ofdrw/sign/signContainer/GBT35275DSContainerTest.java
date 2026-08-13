@@ -34,7 +34,7 @@ class GBT35275DSContainerTest {
      */
     @Test
     void sign() throws GeneralSecurityException, IOException {
-        Security.addProvider(new BouncyCastleProvider());
+        Security.addProvider(org.ofdrw.gm.GmProviders.bouncyCastle());
 
         Path certPemFile = Paths.get("src/test/resources", "sign_cert.pem");
         Path keyPemFile = Paths.get("src/test/resources", "sign_key.pem");

@@ -42,7 +42,7 @@ public class DigitalValidateContainer implements SignedDataValidateContainer {
         if (type != SigType.Sign) {
             throw new IllegalArgumentException("签名类型(type)必须是 Sign，不支持电子印章验证");
         }
-        Signature sg = Signature.getInstance(alg, new BouncyCastleProvider());
+        Signature sg = Signature.getInstance(alg, org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initVerify(pk);
         sg.update(tbsContent);
         if (!sg.verify(signedValue)) {

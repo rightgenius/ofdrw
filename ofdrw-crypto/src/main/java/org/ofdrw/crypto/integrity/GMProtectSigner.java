@@ -72,7 +72,7 @@ public class GMProtectSigner implements ProtectSigner {
         // 计算完整性保护文件的杂凑值,作为待签名原文。
         final byte[] plaintext = md.digest();
         // 签名算法采用SM2时，遵循 《GB/T32918》和《GB/T 35275》
-        Signature sg = Signature.getInstance("SM3WithSM2", new BouncyCastleProvider());
+        Signature sg = Signature.getInstance("SM3WithSM2", org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initSign(this.privateKey);
         sg.update(plaintext);
         // 签名算法采用SM2时，遵循 《GB/T32918》

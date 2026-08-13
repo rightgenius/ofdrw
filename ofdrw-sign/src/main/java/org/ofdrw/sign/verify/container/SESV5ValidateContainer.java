@@ -56,7 +56,7 @@ public class SESV5ValidateContainer implements SignedDataValidateContainer {
         // 验证签章签名 Sign(TBS_Sign)
         byte[] expSigVal = sesSignature.getSignatureValue().getOctets();
         Signature sg = Signature.getInstance(sesSignature.getSignatureAlgID().getId(),
-                new BouncyCastleProvider());
+                org.ofdrw.gm.GmProviders.bouncyCastle());
         byte[] certDER = sesSignature.getCert().getOctets();
         Certificate signCert = new CertificateFactory()
                 .engineGenerateCertificate(new ByteArrayInputStream(certDER));

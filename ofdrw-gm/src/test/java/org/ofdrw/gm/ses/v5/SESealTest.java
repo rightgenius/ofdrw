@@ -62,7 +62,7 @@ class SESealTest {
                 .setPicture(pictrueInfo);
 
         PrivateKey sealerPrvKey = PKCS12Tools.ReadPrvKey(sealerPath, "private", "777777");
-        Signature sg = Signature.getInstance("SM3WithSM2", new BouncyCastleProvider());
+        Signature sg = Signature.getInstance("SM3WithSM2", org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initSign(sealerPrvKey);
         sg.update(sealInfo.getEncoded("DER"));
         byte[] sigVal = sg.sign();

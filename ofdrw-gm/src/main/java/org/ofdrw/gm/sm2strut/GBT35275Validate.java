@@ -110,7 +110,7 @@ public class GBT35275Validate {
                 return VerifyInfo.Err("没有找到匹配的证书无法验证签名");
             }
             final java.security.cert.Certificate cert = CertTools.obj(c);
-            Signature sg = Signature.getInstance(alg, new BouncyCastleProvider());
+            Signature sg = Signature.getInstance(alg, org.ofdrw.gm.GmProviders.bouncyCastle());
             sg.initVerify(cert.getPublicKey());
             sg.update(plaintext);
             byte[] signature = signerInfo.getEncryptedDigest().getOctets();

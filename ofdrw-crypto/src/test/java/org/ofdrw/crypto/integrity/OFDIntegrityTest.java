@@ -30,7 +30,7 @@ class OFDIntegrityTest {
      */
     @Test
     void protect() throws IOException, GeneralSecurityException {
-        Security.addProvider(new BouncyCastleProvider());
+        Security.addProvider(org.ofdrw.gm.GmProviders.bouncyCastle());
 
         Path src = Paths.get("src/test/resources/hello.ofd");
         Path out = Paths.get("target/hello-integrity.ofd");

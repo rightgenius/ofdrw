@@ -74,7 +74,7 @@ public class OFDValidator implements Closeable {
         this.reader = reader;
         ofdDir = reader.getOFDDir();
         rl = reader.getResourceLocator();
-        provider = new BouncyCastleProvider();
+        provider = org.ofdrw.gm.GmProviders.bouncyCastle();
     }
 
 

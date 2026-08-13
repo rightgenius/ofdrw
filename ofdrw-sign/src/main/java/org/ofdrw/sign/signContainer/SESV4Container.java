@@ -140,7 +140,7 @@ public class SESV4Container implements ExtendSignatureContainer {
                 .setDataHash(dataHash)
                 .setPropertyInfo(propertyInfo);
 
-        Signature sg = Signature.getInstance("SM3WithSM2", new BouncyCastleProvider());
+        Signature sg = Signature.getInstance("SM3WithSM2", org.ofdrw.gm.GmProviders.bouncyCastle());
         sg.initSign(privateKey);
         sg.update(toSign.getEncoded("DER"));
         final byte[] sigVal = sg.sign();

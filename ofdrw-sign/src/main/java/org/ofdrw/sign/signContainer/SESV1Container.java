@@ -115,7 +115,7 @@ public class SESV1Container implements ExtendSignatureContainer {
                 .setPropertyInfo(new DERIA5String(propertyInfo))
                 .setCert(new DEROctetString(certificate.getEncoded()))
                 .setSignatureAlgorithm(GMObjectIdentifiers.sm2sign_with_sm3);
-        Signature signature = Signature.getInstance("SM3withSm2", new BouncyCastleProvider());
+        Signature signature = Signature.getInstance("SM3withSm2", org.ofdrw.gm.GmProviders.bouncyCastle());
         signature.initSign(privateKey);
         signature.update(tbsSign.getEncoded("DER"));
         byte[] sign = signature.sign();

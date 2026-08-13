@@ -25,7 +25,7 @@ import java.security.cert.Certificate;
  */
 final public class PEMLoader {
     static {
-        Security.addProvider(new BouncyCastleProvider());
+        Security.addProvider(org.ofdrw.gm.GmProviders.bouncyCastle());
     }
 
     /**

@@ -53,7 +53,7 @@ class SES_SignatureTest {
 
 
         char[] pwd = "777777".toCharArray();
-        KeyStore userKs = KeyStore.getInstance("PKCS12", new BouncyCastleProvider());
+        KeyStore userKs = KeyStore.getInstance("PKCS12", org.ofdrw.gm.GmProviders.bouncyCastle());
         try (InputStream rootKsIn = Files.newInputStream(userP12)) {
             userKs.load(rootKsIn, pwd);
 

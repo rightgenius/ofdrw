@@ -67,7 +67,7 @@ public class DigitalSignContainer implements ExtendSignatureContainer {
     public byte[] sign(InputStream inData, String propertyInfo) throws GeneralSecurityException, IOException {
         Signature signatureFnc = Signature.getInstance(
                 GMObjectIdentifiers.sm2sign_with_sm3.toString(),
-                new BouncyCastleProvider());
+                org.ofdrw.gm.GmProviders.bouncyCastle());
         signatureFnc.initSign(prvKey);
         signatureFnc.update(IOUtils.toByteArray(inData));
         return signatureFnc.sign();

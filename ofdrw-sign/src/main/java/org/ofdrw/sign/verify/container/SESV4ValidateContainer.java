@@ -56,7 +56,7 @@ public class SESV4ValidateContainer implements SignedDataValidateContainer {
         // 预期的电子签章数据，签章值
         byte[] expSigVal = sesSignature.getSignature().getOctets();
         Signature sg = Signature.getInstance(sesSignature.getSignatureAlgID().getId(),
-                new BouncyCastleProvider());
+                org.ofdrw.gm.GmProviders.bouncyCastle());
         byte[] certDER = sesSignature.getCert().getOctets();
         // 构造证书对象
         Certificate signCert = new CertificateFactory()
