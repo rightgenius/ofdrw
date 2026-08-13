@@ -6,7 +6,13 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-class PDFExporterPDFBoxTest {
+/**
+ * {@link PDFExporterOpenPDF} 行为测试。<br>
+ *
+ * 该类是从 PDFBox 版本 (PDFExporterPDFBoxTest) 复制并切换为 OpenPDF 的;
+ * 测试用的 OFD 资源文件保持不变。
+ */
+class PDFExporterOpenPDFTest {
 
 
     /**
@@ -16,7 +22,7 @@ class PDFExporterPDFBoxTest {
     void export() throws Exception {
         Path ofdPath = Paths.get("src/test/resources/999.ofd");
         Path pdfPath = Paths.get("target/999.pdf");
-        try (OFDExporter exporter = new PDFExporterPDFBox(ofdPath, pdfPath)) {
+        try (OFDExporter exporter = new PDFExporterOpenPDF(ofdPath, pdfPath)) {
             exporter.export();
         }
         System.out.println(">> " + pdfPath.toAbsolutePath());
@@ -29,7 +35,7 @@ class PDFExporterPDFBoxTest {
     void testErrImgResource() throws IOException {
         Path ofdIn = Paths.get("src/test/resources/testImageNotFound.ofd");
         Path pdfOut = Paths.get("target/testImageNotFound.pdf");
-        try (OFDExporter exporter = new PDFExporterPDFBox(ofdIn, pdfOut)) {
+        try (OFDExporter exporter = new PDFExporterOpenPDF(ofdIn, pdfOut)) {
             exporter.export();
         }
         System.out.println(">> " + pdfOut.toAbsolutePath());
@@ -42,7 +48,7 @@ class PDFExporterPDFBoxTest {
     void testImageOverridePage() throws IOException {
         Path ofdIn = Paths.get("src/test/resources/testImageOverridePage.ofd");
         Path pdfOut = Paths.get("target/testImageOverridePage.pdf");
-        try (OFDExporter exporter = new PDFExporterPDFBox(ofdIn, pdfOut)) {
+        try (OFDExporter exporter = new PDFExporterOpenPDF(ofdIn, pdfOut)) {
             exporter.export();
         }
         System.out.println(">> " + pdfOut.toAbsolutePath());
@@ -55,7 +61,7 @@ class PDFExporterPDFBoxTest {
     void testPathClip() throws IOException {
         Path ofdIn = Paths.get("src/test/resources/testPathClip.ofd");
         Path pdfOut = Paths.get("target/testPathClip.pdf");
-        try (OFDExporter exporter = new PDFExporterPDFBox(ofdIn, pdfOut)) {
+        try (OFDExporter exporter = new PDFExporterOpenPDF(ofdIn, pdfOut)) {
             exporter.export();
         }
         System.out.println(">> " + pdfOut.toAbsolutePath());
@@ -68,7 +74,7 @@ class PDFExporterPDFBoxTest {
     void testFillRule() throws IOException {
         Path ofdIn = Paths.get("src/test/resources/testImageNotFound.ofd");
         Path pdfOut = Paths.get("target/testFillRule.pdf");
-        try (OFDExporter exporter = new PDFExporterPDFBox(ofdIn, pdfOut)) {
+        try (OFDExporter exporter = new PDFExporterOpenPDF(ofdIn, pdfOut)) {
             exporter.export();
         }
         System.out.println(">> " + pdfOut.toAbsolutePath());
@@ -81,7 +87,7 @@ class PDFExporterPDFBoxTest {
     void testFillColor() throws IOException {
         Path ofdIn = Paths.get("src/test/resources/testPathClip.ofd");
         Path pdfOut = Paths.get("target/testPathColor.pdf");
-        try (OFDExporter exporter = new PDFExporterPDFBox(ofdIn, pdfOut)) {
+        try (OFDExporter exporter = new PDFExporterOpenPDF(ofdIn, pdfOut)) {
             exporter.export();
         }
         System.out.println(">> " + pdfOut.toAbsolutePath());
@@ -94,7 +100,7 @@ class PDFExporterPDFBoxTest {
     void testScaleOfLineWidthAndTextPoint() throws IOException {
         Path ofdIn = Paths.get("src/test/resources/SignScaleError.ofd");
         Path pdfOut = Paths.get("target/testScaleOfLineWidthAndTextPoint.pdf");
-        try (OFDExporter exporter = new PDFExporterPDFBox(ofdIn, pdfOut)) {
+        try (OFDExporter exporter = new PDFExporterOpenPDF(ofdIn, pdfOut)) {
             exporter.export();
         }
         System.out.println(">> " + pdfOut.toAbsolutePath());
@@ -107,12 +113,11 @@ class PDFExporterPDFBoxTest {
     void testFontLoad() throws IOException {
         Path ofdIn = Paths.get("src/test/resources/SignScaleError.ofd");
         Path pdfOut = Paths.get("target/testFontLoad.pdf");
-        try (OFDExporter exporter = new PDFExporterPDFBox(ofdIn, pdfOut)) {
+        try (OFDExporter exporter = new PDFExporterOpenPDF(ofdIn, pdfOut)) {
             exporter.export();
         }
         System.out.println(">> " + pdfOut.toAbsolutePath());
     }
-
 
 
     /**
@@ -122,7 +127,7 @@ class PDFExporterPDFBoxTest {
     void testPathFillOpacity() throws IOException {
         Path ofdIn = Paths.get("src/test/resources/testPathFillOpacity.ofd");
         Path pdfOut = Paths.get("target/testPathFillOpacity.pdf");
-        try (OFDExporter exporter = new PDFExporterIText(ofdIn, pdfOut)) {
+        try (OFDExporter exporter = new PDFExporterOpenPDF(ofdIn, pdfOut)) {
             exporter.export();
         }
         System.out.println(">> " + pdfOut.toAbsolutePath());

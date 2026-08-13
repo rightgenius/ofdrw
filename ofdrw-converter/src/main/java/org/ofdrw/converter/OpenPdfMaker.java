@@ -1,32 +1,23 @@
 package org.ofdrw.converter;
 
+
+import com.lowagie.text.Document;
+import java.awt.Color;
+import com.lowagie.text.DocumentException;
+import com.lowagie.text.Image;
+import com.lowagie.text.Rectangle;
+import com.lowagie.text.pdf.BaseFont;
+import com.lowagie.text.pdf.PdfContentByte;
+import com.lowagie.text.pdf.PdfFileSpecification;
+import com.lowagie.text.pdf.PdfGState;
+import com.lowagie.text.pdf.PdfName;
+import com.lowagie.text.pdf.PdfShading;
+import com.lowagie.text.pdf.PdfShadingPattern;
+import com.lowagie.text.pdf.PdfWriter;
 import org.apache.fontbox.ttf.OTFParser;
 import org.apache.fontbox.ttf.TTFParser;
 import org.apache.fontbox.ttf.TrueTypeCollection;
 import org.apache.fontbox.ttf.TrueTypeFont;
-import org.apache.pdfbox.cos.COSArray;
-import org.apache.pdfbox.cos.COSDictionary;
-import org.apache.pdfbox.cos.COSFloat;
-import org.apache.pdfbox.cos.COSInteger;
-import org.apache.pdfbox.cos.COSName;
-import org.apache.pdfbox.pdmodel.*;
-import org.apache.pdfbox.pdmodel.common.PDRectangle;
-import org.apache.pdfbox.pdmodel.common.filespecification.PDComplexFileSpecification;
-import org.apache.pdfbox.pdmodel.common.filespecification.PDEmbeddedFile;
-import org.apache.pdfbox.pdmodel.common.function.PDFunctionType2;
-import org.apache.pdfbox.pdmodel.font.PDFont;
-import org.apache.pdfbox.pdmodel.font.PDType0Font;
-import org.apache.pdfbox.pdmodel.font.PDType1Font;
-import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
-import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceRGB;
-import org.apache.pdfbox.pdmodel.graphics.image.JPEGFactory;
-import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
-import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
-import org.apache.pdfbox.pdmodel.graphics.shading.PDShading;
-import org.apache.pdfbox.pdmodel.graphics.shading.PDShadingType2;
-import org.apache.pdfbox.pdmodel.graphics.shading.PDShadingType3;
-import org.apache.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState;
-import org.apache.pdfbox.util.Matrix;
 import org.dom4j.Element;
 import org.ofdrw.converter.point.PathPoint;
 import org.ofdrw.converter.point.TextCodePoint;
@@ -67,28 +58,37 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.imageio.ImageIO;
+import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 import static org.ofdrw.converter.utils.CommonUtil.convertPDColor;
 import static org.ofdrw.converter.utils.CommonUtil.converterDpi;
-import static org.ofdrw.core.text.text.Direction.*;
+import static org.ofdrw.core.text.text.Direction.Angle_90;
+import static org.ofdrw.core.text.text.Direction.Angle_180;
+import static org.ofdrw.core.text.text.Direction.Angle_270;
 
 
 /**
- * PDFBox实现的PDF转换实现
+ * OpenPDF实现的PDF转换器
+ * <p>
+ * 取代原 {@code PdfboxMaker}，避免 PDFBox 启动时 {@code java.awt.image.ColorModel} 的
+ * {@code <clinit>} 在 native-image 构建阶段触发 {@code UnsatisfiedLinkError}。
+ * OpenPDF 是 LGPL 协议，无 AWT 运行时依赖，体积小、native-image 友好。
  */
-public class PdfboxMaker {
+public class OpenPdfMaker {
 
-    private static final Logger logger = LoggerFactory.getLogger(PdfboxMaker.class);
+    private static final Logger logger = LoggerFactory.getLogger(OpenPdfMaker.class);
 
     /**
      * OFD解析器
@@ -98,73 +98,64 @@ public class PdfboxMaker {
     /**
      * PDF文档上下文
      */
-    private final PDDocument pdf;
+    private final Document pdf;
+
+    /**
+     * PDF写入器
+     */
+    private final PdfWriter pdfWriter;
+
     /**
      * 资源加载器
-     * <p>
-     * 用于获取OFD内资源
      */
     private final ResourceManage resMgt;
 
-
     /**
      * 字体缓存防止重复加载字体
-     * <p>
-     * KEY: 自族名_字体名_字体路径
      */
-    private Map<String, PDFont> fontCache = new HashMap<>();
+    private final Map<String, BaseFont> fontCache = new HashMap<>();
 
     /**
-     * 默认字体，当无法获取字体时使用
+     * 默认字体
      */
-    private PDFont defaultFont = PDType1Font.HELVETICA_BOLD;
+    private BaseFont defaultFont;
 
-
-    public PdfboxMaker(OFDReader reader, PDDocument pdf) throws IOException {
+    public OpenPdfMaker(OFDReader reader, Document pdf, PdfWriter writer) throws IOException {
         this.reader = reader;
         this.pdf = pdf;
+        this.pdfWriter = writer;
         this.resMgt = reader.getResMgt();
+        try {
+            this.defaultFont = BaseFont.createFont(BaseFont.HELVETICA, BaseFont.CP1252, false);
+        } catch (DocumentException e) {
+            throw new IOException("Unable to load default font", e);
+        }
     }
 
     /**
      * 转换OFD页面为PDF页面
-     *
-     * @param pageInfo 页面信息
-     * @return PDF页面
-     * @throws IOException 操作异常
      */
-    public PDPage makePage(PageInfo pageInfo) throws IOException {
+    public void makePage(PageInfo pageInfo) throws IOException {
         ST_Box pageBox = pageInfo.getSize();
-        double pageWidthPixel = converterDpi(pageBox.getWidth());
-        double pageHeightPixel = converterDpi(pageBox.getHeight());
+        float pageWidthPixel = (float) converterDpi(pageBox.getWidth());
+        float pageHeightPixel = (float) converterDpi(pageBox.getHeight());
 
-        PDRectangle pageSize = new PDRectangle((float) pageWidthPixel, (float) pageHeightPixel);
-        PDPage pdfPage = new PDPage(pageSize);
-        pdf.addPage(pdfPage);
+        Rectangle pageSize = new Rectangle(pageWidthPixel, pageHeightPixel);
+        pdf.setPageSize(pageSize);
+        pdf.newPage();
+        // After newPage() the writer's DirectContent is bound to the new page.
+        PdfContentByte contentStream = pdfWriter.getDirectContent();
+
         final List<AnnotionEntity> annotationEntities = reader.getAnnotationEntities();
         final List<StampAnnotEntity> stampAnnots = reader.getStampAnnots();
-        try (PDPageContentStream contentStream = new PDPageContentStream(pdf, pdfPage)) {
-            // 获取页面内容出现的所有图层，包含模板页（所有页面均按照定义ZOrder排列）
-            List<CT_Layer> layerList = pageInfo.getAllLayer();
-            // 绘制 模板层 和 页面内容层
-            writeLayer(resMgt, contentStream, layerList, pageBox, null);
-            // 绘制电子印章
-            writeStamp(contentStream, pageInfo, stampAnnots);
-            // 绘制注释
-            writeAnnoAppearance(this.resMgt, pageInfo, annotationEntities, contentStream, pageBox);
-        }
-        return pdfPage;
+
+        List<CT_Layer> layerList = pageInfo.getAllLayer();
+        writeLayer(resMgt, contentStream, layerList, pageBox, null);
+        writeStamp(contentStream, pageInfo, stampAnnots);
+        writeAnnoAppearance(this.resMgt, pageInfo, annotationEntities, contentStream, pageBox);
     }
 
-    /**
-     * 绘制印章
-     *
-     * @param contentStream        PDF内容流
-     * @param parent               OFD页面信息
-     * @param stampAnnotEntityList 印章列表
-     * @throws IOException 文件读写异常
-     */
-    private void writeStamp(PDPageContentStream contentStream,
+    private void writeStamp(PdfContentByte contentStream,
                             PageInfo parent,
                             List<StampAnnotEntity> stampAnnotEntityList) throws IOException {
         String pageID = parent.getId().toString();
@@ -172,7 +163,6 @@ public class PdfboxMaker {
             List<StampAnnot> stampAnnots = stampAnnotVo.getStampAnnots();
             for (StampAnnot stampAnnot : stampAnnots) {
                 if (!stampAnnot.getPageRef().toString().equals(pageID)) {
-                    // 不是同一个页面忽略
                     continue;
                 }
                 ST_Box pageBox = parent.getSize();
@@ -180,15 +170,11 @@ public class PdfboxMaker {
                 ST_Box clipBox = stampAnnot.getClip();
 
                 if (stampAnnotVo.getImgType().equalsIgnoreCase("ofd")) {
-                    // 尝试读取并解析OFD印章图像
-                    try (OFDReader sealOfdReader = new OFDReader(new ByteArrayInputStream(stampAnnotVo.getImageByte()));) {
+                    try (OFDReader sealOfdReader = new OFDReader(new ByteArrayInputStream(stampAnnotVo.getImageByte()))) {
                         ResourceManage sealResMgt = sealOfdReader.getResMgt();
                         for (PageInfo ofdPageVo : sealOfdReader.getPageList()) {
-                            // 获取页面内容出现的所有图层，包含模板页（所有页面均按照定义ZOrder排列）
                             List<CT_Layer> layerList = ofdPageVo.getAllLayer();
-                            // 绘制页面内容
                             writeLayer(sealResMgt, contentStream, layerList, pageBox, sealBox);
-                            // 绘制注释
                             writeAnnoAppearance(sealResMgt,
                                     ofdPageVo,
                                     sealOfdReader.getAnnotationEntities(),
@@ -196,7 +182,6 @@ public class PdfboxMaker {
                         }
                     }
                 } else {
-                    // 绘制图片印章内容
                     writeSealImage(contentStream, pageBox, stampAnnotVo.getImageByte(), sealBox, clipBox);
                 }
             }
@@ -204,7 +189,7 @@ public class PdfboxMaker {
     }
 
     private void writeLayer(ResourceManage resMgt,
-                            PDPageContentStream contentStream,
+                            PdfContentByte contentStream,
                             List<CT_Layer> layerList,
                             ST_Box box,
                             ST_Box sealBox) throws IOException {
@@ -220,20 +205,10 @@ public class PdfboxMaker {
         }
     }
 
-    /**
-     * 绘制注释到页面
-     *
-     * @param resMgt           资源管理器
-     * @param pageInfo         OFD页面信息
-     * @param annotionEntities 注解列表
-     * @param contentStream    PDF Content Stream
-     * @param box              绘制区域
-     * @throws IOException 绘制过程中IO操作异常
-     */
     private void writeAnnoAppearance(ResourceManage resMgt,
                                      PageInfo pageInfo,
                                      List<AnnotionEntity> annotionEntities,
-                                     PDPageContentStream contentStream,
+                                     PdfContentByte contentStream,
                                      ST_Box box) throws IOException {
         String pageId = pageInfo.getId().toString();
         for (AnnotionEntity annotionEntity : annotionEntities) {
@@ -246,7 +221,6 @@ public class PdfboxMaker {
             }
             for (Annot annot : annotList) {
                 List<PageBlockType> pageBlockTypeList = annot.getAppearance().getPageBlocks();
-                //注释的boundary
                 ST_Box annotBox = annot.getAppearance().getBoundary();
                 writePageBlock(resMgt, contentStream, box, null, pageBlockTypeList, null, annotBox, null, null, null);
             }
@@ -254,7 +228,7 @@ public class PdfboxMaker {
     }
 
     private void writePageBlock(ResourceManage resMgt,
-                                PDPageContentStream contentStream,
+                                PdfContentByte contentStream,
                                 ST_Box box, ST_Box sealBox,
                                 List<PageBlockType> pageBlockTypeList,
                                 ST_RefID drawparam,
@@ -262,11 +236,9 @@ public class PdfboxMaker {
                                 Integer compositeObjectAlpha,
                                 ST_Box compositeObjectBoundary,
                                 ST_Array compositeObjectCTM) throws IOException {
-        // 初始化绘制属性
-        PDColor defaultFillColor = new PDColor(new float[]{0.0f, 0.0f, 0.0f}, PDDeviceRGB.INSTANCE);
-        PDColor defaultStrokeColor = new PDColor(new float[]{0.0f, 0.0f, 0.0f}, PDDeviceRGB.INSTANCE);
+        Color defaultFillColor = Color.BLACK;
+        Color defaultStrokeColor = Color.BLACK;
         float defaultLineWidth = 0.353f;
-        // 递归的获取绘制参数
         CT_DrawParam ctDrawParam = null;
         if (drawparam != null) {
             ctDrawParam = resMgt.getDrawParamFinal(drawparam.toString());
@@ -285,8 +257,7 @@ public class PdfboxMaker {
 
         for (PageBlockType block : pageBlockTypeList) {
             if (block instanceof TextObject) {
-                // text
-                PDColor fillColor = defaultFillColor;
+                Color fillColor = defaultFillColor;
                 TextObject textObject = (TextObject) block;
                 resMgt.superDrawParam(textObject);
                 int alpha = 255;
@@ -294,7 +265,6 @@ public class PdfboxMaker {
                     if (textObject.getFillColor().getValue() != null) {
                         fillColor = convertPDColor(textObject.getFillColor().getValue());
                     } else if (textObject.getFillColor().getColorByType() != null) {
-                        // todo
                         CT_AxialShd ctAxialShd = textObject.getFillColor().getColorByType();
                         fillColor = convertPDColor(ctAxialShd.getSegments().get(0).getColor().getValue());
                     }
@@ -302,18 +272,15 @@ public class PdfboxMaker {
                 }
                 writeText(resMgt, contentStream, box, sealBox, textObject, fillColor, alpha);
             } else if (block instanceof ImageObject) {
-                // image
                 ImageObject imageObject = (ImageObject) block;
-                resMgt.superDrawParam(imageObject); // 补充图元参数
+                resMgt.superDrawParam(imageObject);
                 writeImage(resMgt, contentStream, box, imageObject, annotBox);
             } else if (block instanceof PathObject) {
-                // path
                 PathObject pathObject = (PathObject) block;
-                resMgt.superDrawParam(pathObject); // 补充图元参数
+                resMgt.superDrawParam(pathObject);
                 writePath(resMgt, contentStream, box, sealBox, annotBox, pathObject, defaultFillColor, defaultStrokeColor, defaultLineWidth, compositeObjectAlpha, compositeObjectBoundary, compositeObjectCTM);
             } else if (block instanceof CompositeObject) {
                 CompositeObject compositeObject = (CompositeObject) block;
-                // 获取引用的矢量资源
                 CT_VectorG vectorG = resMgt.getCompositeGraphicUnit(compositeObject.getResourceID().toString());
                 Integer currentCompositeObjectAlpha = compositeObject.getAlpha();
                 ST_Box currentCompositeObjectBoundary = compositeObject.getBoundary();
@@ -325,15 +292,13 @@ public class PdfboxMaker {
         }
     }
 
-    private PDShading parseAxial(Element eleAxialShd, ResourceManage resMgt, ST_Box box, PathObject pathObject) {
-        PDShading result = null;
+    private PdfShadingPattern parseAxial(Element eleAxialShd, ST_Box box, PathObject pathObject) {
         if (eleAxialShd == null) {
-            return result;
+            return null;
         }
-
         CT_AxialShd ctAxialShd = new CT_AxialShd(eleAxialShd);
-        PDColor startColor = convertPDColor(ctAxialShd.getSegments().get(0).getColor().getValue());
-        PDColor endColor = convertPDColor(
+        Color startColor = convertPDColor(ctAxialShd.getSegments().get(0).getColor().getValue());
+        Color endColor = convertPDColor(
                 ctAxialShd.getSegments().get(ctAxialShd.getSegments().size() - 1).getColor().getValue());
         ST_Pos startPos = ctAxialShd.getStartPoint();
         ST_Pos endPos = ctAxialShd.getEndPoint();
@@ -347,47 +312,32 @@ public class PdfboxMaker {
         x2 = realPos[0];
         y2 = box.getHeight() - realPos[1];
 
-        COSDictionary fdict = new COSDictionary();
-        fdict.setInt(COSName.FUNCTION_TYPE, 2);
-        COSArray domain = new COSArray();
-        domain.add(COSInteger.ZERO);
-        domain.add(COSInteger.ONE);
-        fdict.setItem(COSName.DOMAIN, domain);
-        fdict.setItem(COSName.C0, startColor.toCOSArray());
-        fdict.setItem(COSName.C1, endColor.toCOSArray());
-        fdict.setInt(COSName.N, 1);
-        PDFunctionType2 func = new PDFunctionType2(fdict);
-
-        PDShadingType2 axialShading = new PDShadingType2(new COSDictionary());
-        axialShading.setColorSpace(PDDeviceRGB.INSTANCE);
-        axialShading.setShadingType(PDShading.SHADING_TYPE2);
-        COSArray coords1 = new COSArray();
-        coords1.add(new COSFloat((float) CommonUtil.converterDpi(x1)));
-        coords1.add(new COSFloat((float) CommonUtil.converterDpi(y1)));
-        coords1.add(new COSFloat((float) CommonUtil.converterDpi(x2)));
-        coords1.add(new COSFloat((float) CommonUtil.converterDpi(y2)));
-        axialShading.setCoords(coords1);
-        axialShading.setFunction(func);
-
-        result = axialShading;
-
-        return result;
+        PdfShading axial = PdfShading.simpleAxial(
+                pdfWriter,
+                (float) converterDpi(x1),
+                (float) converterDpi(y1),
+                (float) converterDpi(x2),
+                (float) converterDpi(y2),
+                startColor,
+                endColor,
+                false,
+                false);
+        return new PdfShadingPattern(axial);
     }
 
-    private PDShading parseRadial(Element eleRadialShd, ResourceManage resMgt, ST_Box box, PathObject pathObject) {
-        PDShading result = null;
+    private PdfShadingPattern parseRadial(Element eleRadialShd, ST_Box box, PathObject pathObject) {
         if (eleRadialShd == null) {
-            return result;
+            return null;
         }
-
         CT_RadialShd ctRadialShd = new CT_RadialShd(eleRadialShd);
-        PDColor startColor = convertPDColor(ctRadialShd.getSegments().get(0).getColor().getValue());
-        PDColor endColor = convertPDColor(
+        Color startColor = convertPDColor(ctRadialShd.getSegments().get(0).getColor().getValue());
+        Color endColor = convertPDColor(
                 ctRadialShd.getSegments().get(ctRadialShd.getSegments().size() - 1).getColor().getValue());
         ST_Pos startPos = ctRadialShd.getStartPoint();
         ST_Pos endPos = ctRadialShd.getEndPoint();
         double x1 = startPos.getX(), y1 = startPos.getY();
         double x2 = endPos.getX(), y2 = endPos.getY();
+
         double[] realPos = PointUtil.adjustPos(box.getWidth(), box.getHeight(), x1, y1, pathObject.getBoundary());
         x1 = realPos[0];
         y1 = box.getHeight() - realPos[1];
@@ -395,76 +345,49 @@ public class PdfboxMaker {
         x2 = realPos[0];
         y2 = box.getHeight() - realPos[1];
 
-        COSDictionary fdict = new COSDictionary();
-        fdict.setInt(COSName.FUNCTION_TYPE, 2);
-        COSArray domain = new COSArray();
-        domain.add(COSInteger.ZERO);
-        domain.add(COSInteger.ONE);
-        fdict.setItem(COSName.DOMAIN, domain);
-        fdict.setItem(COSName.C0, startColor.toCOSArray());
-        fdict.setItem(COSName.C1, endColor.toCOSArray());
-        fdict.setInt(COSName.N, 1);
-        PDFunctionType2 func = new PDFunctionType2(fdict);
-
-        PDShadingType3 radialShading = new PDShadingType3(new COSDictionary());
-        radialShading.setColorSpace(PDDeviceRGB.INSTANCE);
-        radialShading.setShadingType(PDShading.SHADING_TYPE3);
-        COSArray coords1 = new COSArray();
-        coords1.add(new COSFloat((float) CommonUtil.converterDpi(x1)));
-        coords1.add(new COSFloat((float) CommonUtil.converterDpi(y1)));
-        coords1.add(new COSFloat((float) CommonUtil.converterDpi(ctRadialShd.getStartRadius())));
-        coords1.add(new COSFloat((float) CommonUtil.converterDpi(x2)));
-        coords1.add(new COSFloat((float) CommonUtil.converterDpi(y2)));
-        coords1.add(new COSFloat((float) CommonUtil.converterDpi(ctRadialShd.getEndRadius())));
-        radialShading.setCoords(coords1);
-        radialShading.setFunction(func);
-
-        result = radialShading;
-
-        return result;
+        PdfShading radial = PdfShading.simpleRadial(
+                pdfWriter,
+                (float) converterDpi(x1),
+                (float) converterDpi(y1),
+                (float) converterDpi(ctRadialShd.getStartRadius()),
+                (float) converterDpi(x2),
+                (float) converterDpi(y2),
+                (float) converterDpi(ctRadialShd.getEndRadius()),
+                startColor,
+                endColor,
+                false,
+                false);
+        return new PdfShadingPattern(radial);
     }
 
-    private PDShading parseShading(CT_Color color, ST_Box box, PathObject pathObject) {
-        PDShading shading = null;
+    private PdfShadingPattern parseShading(CT_Color color, ST_Box box, PathObject pathObject) {
         if (color == null) {
-            return shading;
+            return null;
         }
-        PDShading axialShading = parseAxial(color.getOFDElement("AxialShd"), resMgt, box, pathObject);
-        if (axialShading != null) {
-            shading = axialShading;
-        }
-
-        PDShading radialShading = parseRadial(color.getOFDElement("RadialShd"), resMgt, box, pathObject);
-        if (radialShading != null) {
-            shading = radialShading;
-        }
-        return shading;
+        PdfShadingPattern axial = parseAxial(color.getOFDElement("AxialShd"), box, pathObject);
+        if (axial != null) return axial;
+        return parseRadial(color.getOFDElement("RadialShd"), box, pathObject);
     }
 
     private void writePath(ResourceManage resMgt,
-                           PDPageContentStream contentStream,
+                           PdfContentByte contentStream,
                            ST_Box box,
                            ST_Box sealBox,
                            ST_Box annotBox,
                            PathObject pathObject,
-                           PDColor defaultFillColor,
-                           PDColor defaultStrokeColor,
+                           Color defaultFillColor,
+                           Color defaultStrokeColor,
                            float defaultLineWidth,
                            Integer compositeObjectAlpha,
                            ST_Box compositeObjectBoundary,
                            ST_Array compositeObjectCTM) throws IOException {
-        contentStream.saveGraphicsState();
         double scale = scaling(sealBox, pathObject);
-        // 获取引用的绘制参数可能会null
         CT_DrawParam ctDrawParam = resMgt.superDrawParam(pathObject);
         if (ctDrawParam != null) {
-            // 使用绘制参数补充缺省的颜色
-            if (pathObject.getStrokeColor() == null
-                    && ctDrawParam.getStrokeColor() != null) {
+            if (pathObject.getStrokeColor() == null && ctDrawParam.getStrokeColor() != null) {
                 pathObject.setStrokeColor(ctDrawParam.getStrokeColor());
             }
-            if (pathObject.getFillColor() == null
-                    && ctDrawParam.getFillColor() != null) {
+            if (pathObject.getFillColor() == null && ctDrawParam.getFillColor() != null) {
                 pathObject.setFillColor(ctDrawParam.getFillColor());
             }
             if (pathObject.getLineWidth() == null && ctDrawParam.getLineWidth() != null) {
@@ -472,17 +395,7 @@ public class PdfboxMaker {
             }
         }
 
-        // 设置描边颜色
         final StrokeColor strokeColor = pathObject.getStrokeColor();
-        if (strokeColor != null) {
-            if (strokeColor.getValue() != null) {
-                contentStream.setStrokingColor(convertPDColor(strokeColor.getValue()));
-            } else {
-                setShadingFill(contentStream, strokeColor, false);
-            }
-        } else {
-            contentStream.setStrokingColor(defaultStrokeColor);
-        }
 
         boolean legacyAbsolutePath = sealBox == null && annotBox == null && compositeObjectBoundary == null
                 && PointUtil.isLegacyAbsolutePath(box.getWidth(), box.getHeight(), pathObject.getBoundary(),
@@ -493,117 +406,95 @@ public class PdfboxMaker {
             lineWidth = (float) PointUtil.calPdfPathLineWidth(pathObject.getLineWidth(), scale,
                     legacyAbsolutePath, pathObject.getCTM());
         }
-        contentStream.setLineWidth(lineWidth);
+
+        // Each branch owns its own saveState/restoreState pair so the OpenPDF
+        // content stream stays balanced (the original PDFBox version leaked the
+        // outer saveState in the !stroke cases, which OpenPDF's sanityCheck
+        // surfaces as "Unbalanced save/restore state operators" between pages).
         if (pathObject.getStroke()) {
+            contentStream.saveState();
+            if (strokeColor != null) {
+                if (strokeColor.getValue() != null) {
+                    contentStream.setColorStroke(convertPDColor(strokeColor.getValue()));
+                } else {
+                    setShadingAsColor(contentStream, strokeColor, false);
+                }
+            } else {
+                contentStream.setColorStroke(defaultStrokeColor);
+            }
+            contentStream.setLineWidth(lineWidth);
             if (compositeObjectAlpha != null) {
-                PDExtendedGraphicsState graphicsState = new PDExtendedGraphicsState();
-                graphicsState.setStrokingAlphaConstant(compositeObjectAlpha * 1.0f / 255);
-                contentStream.setGraphicsStateParameters(graphicsState);
+                PdfGState gs = new PdfGState();
+                gs.setStrokeOpacity(compositeObjectAlpha * 1.0f / 255);
+                contentStream.setGState(gs);
             }
             if (pathObject.getDashPattern() != null) {
                 float unitsOn = (float) converterDpi(pathObject.getDashPattern().toDouble()[0].floatValue());
                 float unitsOff = (float) converterDpi(pathObject.getDashPattern().toDouble()[1].floatValue());
                 float phase = (float) converterDpi(pathObject.getDashOffset().floatValue());
-                contentStream.setLineDashPattern(new float[]{unitsOn, unitsOff}, phase);
+                contentStream.setLineDash(new float[]{unitsOn, unitsOff}, phase);
             }
-            contentStream.setLineJoinStyle(pathObject.getJoin().ordinal());
-            contentStream.setLineCapStyle(pathObject.getCap().ordinal());
+            contentStream.setLineJoin(pathObject.getJoin().ordinal());
+            contentStream.setLineCap(pathObject.getCap().ordinal());
             contentStream.setMiterLimit(pathObject.getMiterLimit().floatValue());
             path(contentStream, box, sealBox, annotBox, pathObject, compositeObjectBoundary, compositeObjectCTM);
-            PDShading shading = parseShading(strokeColor, box, pathObject);
+            PdfShadingPattern shading = parseShading(strokeColor, box, pathObject);
             if (shading != null) {
                 contentStream.clip();
-                contentStream.shadingFill(shading);
+                contentStream.paintShading(shading);
             }
             contentStream.stroke();
-            contentStream.restoreGraphicsState();
+            contentStream.restoreState();
         }
         if (pathObject.getFill()) {
-            contentStream.saveGraphicsState();
+            contentStream.saveState();
             if (compositeObjectAlpha != null) {
-                PDExtendedGraphicsState graphicsState = new PDExtendedGraphicsState();
-                graphicsState.setNonStrokingAlphaConstant(compositeObjectAlpha * 1.0f / 255);
-                contentStream.setGraphicsStateParameters(graphicsState);
+                PdfGState gs = new PdfGState();
+                gs.setFillOpacity(compositeObjectAlpha * 1.0f / 255);
+                contentStream.setGState(gs);
             }
             FillColor fillColor = (FillColor) pathObject.getFillColor();
             if (fillColor != null) {
                 if (fillColor.getValue() != null) {
-                    contentStream.setNonStrokingColor(convertPDColor(fillColor.getValue()));
+                    contentStream.setColorFill(convertPDColor(fillColor.getValue()));
                 } else {
-                    // todo
-                    setShadingFill(contentStream, fillColor, true);
+                    setShadingAsColor(contentStream, fillColor, true);
                 }
             } else {
-                contentStream.setNonStrokingColor(defaultFillColor);
+                contentStream.setColorFill(defaultFillColor);
             }
             path(contentStream, box, sealBox, annotBox, pathObject, compositeObjectBoundary, compositeObjectCTM);
-            PDShading shading = parseShading(fillColor, box, pathObject);
+            PdfShadingPattern shading = parseShading(fillColor, box, pathObject);
             if (shading != null) {
                 contentStream.clip();
-                contentStream.shadingFill(shading);
+                contentStream.paintShading(shading);
             }
-            
+
             if (pathObject.getRule() != null && pathObject.getRule().equals(Rule.Even_Odd)) {
-                contentStream.fillEvenOdd();
+                contentStream.eoFill();
             } else {
                 contentStream.fill();
             }
-            contentStream.restoreGraphicsState();
+            contentStream.restoreState();
         }
     }
 
-    private void setShadingFill(PDPageContentStream contentStream, CT_Color ctColor, boolean isFill) throws IOException {
+    private void setShadingAsColor(PdfContentByte contentStream, CT_Color ctColor, boolean isFill) throws IOException {
         ColorClusterType color = ctColor.getColor();
         if (!(color instanceof CT_AxialShd)) {
             return;
         }
         CT_AxialShd ctAxialShd = (CT_AxialShd) color;
-
-        ST_Array start = ctAxialShd.getSegments().get(0).getColor().getValue();
         ST_Array end = ctAxialShd.getSegments().get(ctAxialShd.getSegments().size() - 1).getColor().getValue();
-        ST_Pos startPos = ctAxialShd.getStartPoint();
-        ST_Pos endPos = ctAxialShd.getEndPoint();
+        Color endColor = convertPDColor(end);
         if (isFill) {
-            contentStream.setNonStrokingColor(convertPDColor(end));
+            contentStream.setColorFill(endColor);
         } else {
-            contentStream.setStrokingColor(convertPDColor(end));
+            contentStream.setColorStroke(endColor);
         }
-//                    COSDictionary fdict = new COSDictionary();
-//                    fdict.setInt(COSName.FUNCTION_TYPE, 2); // still not understaning that...
-//                    COSArray domain = new COSArray();
-//                    domain.add(COSInteger.get(0));
-//                    domain.add(COSInteger.get(1));
-//                    COSArray c0 = new COSArray();
-//                    Double[] first = ctAxialShd.getSegments().get(0).getColor().getValue().toDouble();
-//                    Double[] end = ctAxialShd.getSegments().get(ctAxialShd.getSegments().size() - 1).getColor().getValue().toDouble();
-//                    c0.add(COSFloat.get(String.format("%.2f", first[0] * 1.0 / 255)));
-//                    c0.add(COSFloat.get(String.format("%.2f", first[1] * 1.0 / 255)));
-//                    c0.add(COSFloat.get(String.format("%.2f", first[2] * 1.0 / 255)));
-//                    COSArray c2 = new COSArray();
-//                    c2.add(COSFloat.get(String.format("%.2f", end[0] * 1.0 / 255)));
-//                    c2.add(COSFloat.get(String.format("%.2f", end[1] * 1.0 / 255)));
-//                    c2.add(COSFloat.get(String.format("%.2f", end[2] * 1.0 / 255)));
-//                    fdict.setItem(COSName.DOMAIN, domain);
-//                    fdict.setItem(COSName.C0, c0);
-//                    fdict.setItem(COSName.C1, c2);
-//                    fdict.setInt(COSName.N, 1);
-//
-//                    PDFunctionType2 func = new PDFunctionType2(fdict);
-//
-//                    PDShadingType2 axialShading = new PDShadingType2(new COSDictionary());
-//                    axialShading.setColorSpace(PDDeviceRGB.INSTANCE);
-//                    axialShading.setShadingType(PDShading.SHADING_TYPE2);
-//                    COSArray coords1 = new COSArray();
-//                    coords1.add(COSFloat.get(String.valueOf(ctAxialShd.getStartPoint().getX())));
-//                    coords1.add(COSFloat.get(String.valueOf(ctAxialShd.getStartPoint().getY())));
-//                    coords1.add(COSFloat.get(String.valueOf(ctAxialShd.getEndPoint().getX())));
-//                    coords1.add(COSFloat.get(String.valueOf(ctAxialShd.getEndPoint().getY())));
-//                    axialShading.setCoords(coords1); // so this sets the bounds of my gradient
-//                    axialShading.setFunction(func); // and this determines all the curves etc?
-//                    contentStream.shadingFill(axialShading);
     }
 
-    private void path(PDPageContentStream contentStream, ST_Box box, ST_Box sealBox, ST_Box annotBox, PathObject pathObject, ST_Box compositeObjectBoundary, ST_Array compositeObjectCTM) throws IOException {
+    private void path(PdfContentByte contentStream, ST_Box box, ST_Box sealBox, ST_Box annotBox, PathObject pathObject, ST_Box compositeObjectBoundary, ST_Array compositeObjectCTM) throws IOException {
         if (pathObject.getBoundary() == null) {
             return;
         }
@@ -620,33 +511,35 @@ public class PdfboxMaker {
                     pathObject.getBoundary().getWidth(),
                     pathObject.getBoundary().getHeight());
         }
-        
+
         clip(contentStream, box, pathObject);
-        
+
         List<PathPoint> listPoint = PointUtil.calPdfPathPoint(box.getWidth(), box.getHeight(), pathObject.getBoundary(), PointUtil.convertPathAbbreviatedDatatoPoint(pathObject.getAbbreviatedData()), pathObject.getCTM() != null, pathObject.getCTM(), compositeObjectBoundary, compositeObjectCTM, true, scale);
         for (int i = 0; i < listPoint.size(); i++) {
-            if (listPoint.get(i).type.equals("M") || listPoint.get(i).type.equals("S")) {
+            String t = listPoint.get(i).type;
+            if ("M".equals(t) || "S".equals(t)) {
                 contentStream.moveTo(listPoint.get(i).x1, listPoint.get(i).y1);
-            } else if (listPoint.get(i).type.equals("L")) {
+            } else if ("L".equals(t)) {
                 contentStream.lineTo(listPoint.get(i).x1, listPoint.get(i).y1);
-            } else if (listPoint.get(i).type.equals("B")) {
+            } else if ("B".equals(t)) {
                 contentStream.curveTo(listPoint.get(i).x1, listPoint.get(i).y1,
                         listPoint.get(i).x2, listPoint.get(i).y2,
                         listPoint.get(i).x3, listPoint.get(i).y3);
-            } else if (listPoint.get(i).type.equals("Q")) {
-                contentStream.curveTo1(listPoint.get(i).x1, listPoint.get(i).y1,
+            } else if ("Q".equals(t)) {
+                // Quadratic to cubic: duplicate control point as second control + endpoint
+                contentStream.curveTo(listPoint.get(i).x1, listPoint.get(i).y1,
+                        listPoint.get(i).x2, listPoint.get(i).y2,
                         listPoint.get(i).x2, listPoint.get(i).y2);
-            } else if (listPoint.get(i).type.equals("C")) {
+            } else if ("C".equals(t)) {
                 contentStream.closePath();
             }
         }
     }
 
-    private void clip(PDPageContentStream contentStream, ST_Box box, PathObject pathObject) throws IOException {
+    private void clip(PdfContentByte contentStream, ST_Box box, PathObject pathObject) throws IOException {
         if (pathObject.getClips() == null) {
             return;
         }
-
         List<CT_Clip> clips = pathObject.getClips().getClips();
         for (int k = 0; k < clips.size(); k++) {
             CT_Clip clip = clips.get(k);
@@ -663,16 +556,17 @@ public class PdfboxMaker {
                         area.getCTM(), null, null, true, 1.0);
                 for (int i = 0; i < points.size(); i++) {
                     PathPoint pathPoint = points.get(i);
-                    if (pathPoint.type.equals("M") || pathPoint.type.equals("S")) {
+                    String t = pathPoint.type;
+                    if ("M".equals(t) || "S".equals(t)) {
                         contentStream.moveTo(pathPoint.x1, pathPoint.y1);
-                    } else if (pathPoint.type.equals("L")) {
+                    } else if ("L".equals(t)) {
                         contentStream.lineTo(pathPoint.x1, pathPoint.y1);
-                    } else if (pathPoint.type.equals("B")) {
+                    } else if ("B".equals(t)) {
                         contentStream.curveTo(pathPoint.x1, pathPoint.y1, pathPoint.x2, pathPoint.y2, pathPoint.x3,
                                 pathPoint.y3);
-                    } else if (pathPoint.type.equals("Q")) {
-                        contentStream.curveTo2(pathPoint.x1, pathPoint.y1, pathPoint.x2, pathPoint.y2);
-                    } else if (pathPoint.type.equals("C")) {
+                    } else if ("Q".equals(t)) {
+                        contentStream.curveTo(pathPoint.x1, pathPoint.y1, pathPoint.x2, pathPoint.y2, pathPoint.x2, pathPoint.y2);
+                    } else if ("C".equals(t)) {
                         contentStream.closePath();
                     }
                 }
@@ -684,13 +578,6 @@ public class PdfboxMaker {
         }
     }
 
-    /**
-     * 计算当前盒子到目标盒子的缩放比例
-     * 
-     * @param targetBox 目标区域大小
-     * @param currentBox 当前区域大小
-     * @return 缩放比例
-     */
     private double scaling(ST_Box targetBox, ST_Box currentBox) {
         double scale = 1.0;
         if (targetBox != null && currentBox != null) {
@@ -700,13 +587,6 @@ public class PdfboxMaker {
         return scale;
     }
 
-    /**
-     * 计算图元到目标盒子的缩放比例
-     * 
-     * @param targetBox 目标盒子
-     * @param graphicUnit 图元
-     * @return 缩放比例
-     */
     private double scaling(ST_Box targetBox, @SuppressWarnings("rawtypes") CT_GraphicUnit graphicUnit) {
         double scale = 1D;
         PageBlockType instance = PageBlockType.getInstance(graphicUnit.getParent());
@@ -716,23 +596,15 @@ public class PdfboxMaker {
         return scale;
     }
 
-    /**
-     * 判断两个box的位置和大小是否相同
-     * 
-     * @param box1 A
-     * @param box2 B
-     * @return true: 相同；false: 不同
-     */
     private boolean isSameBox(ST_Box box1, ST_Box box2) {
         if (null == box1 || null == box2) {
             return false;
         }
         return box1.getTopLeftX().equals(box2.getTopLeftX()) && box1.getTopLeftY().equals(box2.getTopLeftY())
-            && box1.getWidth().equals(box2.getWidth()) && box1.getHeight().equals(box2.getHeight());
+                && box1.getWidth().equals(box2.getWidth()) && box1.getHeight().equals(box2.getHeight());
     }
 
-    private void writeImage(ResourceManage resMgt, PDPageContentStream contentStream, ST_Box box, ImageObject imageObject, ST_Box annotBox) throws IOException {
-        // 读取图片
+    private void writeImage(ResourceManage resMgt, PdfContentByte contentStream, ST_Box box, ImageObject imageObject, ST_Box annotBox) throws IOException {
         final ST_RefID resourceID = imageObject.getResourceID();
         if (resourceID == null) {
             return;
@@ -750,80 +622,86 @@ public class PdfboxMaker {
         if (bufferedImage == null) {
             return;
         }
-        contentStream.saveGraphicsState();
+        contentStream.saveState();
 
-        // OFD image objects use normal source-over compositing. Applying Multiply
-        // changes opaque white pixels into transparent-looking pixels and exposes
-        // content that should have been covered by the image.
         Integer alpha = imageObject.getAlpha();
         if (alpha != null && alpha < 255) {
-            PDExtendedGraphicsState graphicsState = new PDExtendedGraphicsState();
-            graphicsState.setNonStrokingAlphaConstant(alpha * 1.0f / 255);
-            contentStream.setGraphicsStateParameters(graphicsState);
+            PdfGState gs = new PdfGState();
+            gs.setFillOpacity(alpha * 1.0f / 255);
+            contentStream.setGState(gs);
         }
 
-        // 根据图片格式决定图片使用哪种创建方式
-        PDImageXObject pdfImageObject;
+        Image imgObj;
         CT_MultiMedia multiMedia = resMgt.getMultiMedia(resourceID.toString());
-        if(multiMedia != null && "JPEG".equals(multiMedia.getFormat())){
-            pdfImageObject = JPEGFactory.createFromImage(pdf, bufferedImage);
-        }else {
-            pdfImageObject = LosslessFactory.createFromImage(pdf, bufferedImage);
+        try {
+            if (multiMedia != null && "JPEG".equals(multiMedia.getFormat())) {
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                ImageIO.write(bufferedImage, "JPEG", bos);
+                imgObj = Image.getInstance(bos.toByteArray());
+            } else {
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                ImageIO.write(bufferedImage, "PNG", bos);
+                imgObj = Image.getInstance(bos.toByteArray());
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to encode image {}: {}", resourceID, e.getMessage());
+            contentStream.restoreState();
+            return;
         }
+        imgObj.setAbsolutePosition(0, 0);
 
         if (annotBox != null && !isSameBox(annotBox, imageObject.getBoundary())) {
             float x = annotBox.getTopLeftX().floatValue();
             float y = box.getHeight().floatValue() - (annotBox.getTopLeftY().floatValue() + annotBox.getHeight().floatValue());
             float width = annotBox.getWidth().floatValue();
             float height = annotBox.getHeight().floatValue();
-            contentStream.drawImage(pdfImageObject, (float) converterDpi(x), (float) converterDpi(y), (float) converterDpi(width), (float) converterDpi(height));
+            contentStream.addImage(imgObj, (float) converterDpi(width), 0, 0, (float) converterDpi(height),
+                    (float) converterDpi(x), (float) converterDpi(y));
         } else {
-            org.apache.pdfbox.util.Matrix matrix = CommonUtil.toPFMatrix(CommonUtil.getImageMatrixFromOfd(imageObject, box));
-            contentStream.drawImage(pdfImageObject, matrix);
+            AffineTransform matrix = CommonUtil.toPFMatrix(CommonUtil.getImageMatrixFromOfd(imageObject, box));
+            float a = (float) matrix.getScaleX();
+            float b = (float) matrix.getShearY();
+            float c = (float) matrix.getShearX();
+            float d = (float) matrix.getScaleY();
+            float e = (float) matrix.getTranslateX();
+            float f = (float) matrix.getTranslateY();
+            contentStream.addImage(imgObj, a, b, c, d, e, f);
         }
-        contentStream.restoreGraphicsState();
+        contentStream.restoreState();
     }
 
-    private void writeSealImage(PDPageContentStream contentStream, ST_Box box, byte[] image, ST_Box sealBox, ST_Box clipBox) throws IOException {
+    private void writeSealImage(PdfContentByte contentStream, ST_Box box, byte[] image, ST_Box sealBox, ST_Box clipBox) throws IOException {
         if (image == null) {
             return;
         }
-        contentStream.saveGraphicsState();
-
-        PDImageXObject pdfImageObject = LosslessFactory.createFromImage(pdf, ImageIO.read(new ByteArrayInputStream(image)));
+        contentStream.saveState();
+        Image pdfImageObject;
+        try {
+            pdfImageObject = Image.getInstance(image);
+        } catch (Exception e) {
+            logger.warn("Failed to load seal image: {}", e.getMessage());
+            contentStream.restoreState();
+            return;
+        }
+        pdfImageObject.setAbsolutePosition(0, 0);
         float x = sealBox.getTopLeftX().floatValue();
         float y = box.getHeight().floatValue() - (sealBox.getTopLeftY().floatValue() + sealBox.getHeight().floatValue());
         float width = sealBox.getWidth().floatValue();
         float height = sealBox.getHeight().floatValue();
         if (clipBox != null) {
-            contentStream.addRect((float) converterDpi(x) + (float) converterDpi(clipBox.getTopLeftX()), (float) converterDpi(y) + (float) (converterDpi(height) - (converterDpi(clipBox.getTopLeftY()) + converterDpi(clipBox.getHeight()))), (float) converterDpi(clipBox.getWidth()), (float) converterDpi(clipBox.getHeight()));
+            contentStream.rectangle((float) converterDpi(x) + (float) converterDpi(clipBox.getTopLeftX()),
+                    (float) converterDpi(y) + (float) (converterDpi(height) - (converterDpi(clipBox.getTopLeftY()) + converterDpi(clipBox.getHeight()))),
+                    (float) converterDpi(clipBox.getWidth()), (float) converterDpi(clipBox.getHeight()));
             contentStream.closePath();
             contentStream.clip();
             contentStream.stroke();
         }
-        contentStream.drawImage(pdfImageObject, (float) converterDpi(x), (float) converterDpi(y), (float) converterDpi(width), (float) converterDpi(height));
-        contentStream.restoreGraphicsState();
+        contentStream.addImage(pdfImageObject, (float) converterDpi(width), 0, 0, (float) converterDpi(height),
+                (float) converterDpi(x), (float) converterDpi(y));
+        contentStream.restoreState();
     }
 
-    /**
-     * 获取字号 ，若无法获取则设置为默认值 0.353。
-     * @param textObject 文字对象
-     * @return 字号。
-     */
-    private float getTextObjectSize(TextObject textObject) {
-    	float fontSize = 0.353f;
-        if (textObject == null) {
-            return fontSize;
-        }
-        try {
-            fontSize = textObject.getSize().floatValue();
-        } catch (Exception e) {
-            fontSize = 0.353f;
-        }
-        return fontSize;
-    }
-
-    private void writeText(ResourceManage resMgt, PDPageContentStream contentStream, ST_Box box, ST_Box sealBox, TextObject textObject, PDColor defaultFontColor, int alpha) throws IOException {
+    private void writeText(ResourceManage resMgt, PdfContentByte contentStream, ST_Box box, ST_Box sealBox, TextObject textObject, Color defaultFontColor, int alpha) throws IOException {
         double scale = scaling(sealBox, textObject);
         float fontSize = Double.valueOf(textObject.getSize() * scale).floatValue();
         if (sealBox != null && textObject.getBoundary() != null) {
@@ -832,48 +710,45 @@ public class PdfboxMaker {
                     textObject.getBoundary().getWidth(),
                     textObject.getBoundary().getHeight());
         }
-        PDColor fillColor = defaultFontColor;
+        Color fillColor = defaultFontColor;
         CT_DrawParam ctDrawParam = resMgt.superDrawParam(textObject);
         if (ctDrawParam != null) {
-            // 使用绘制参数补充缺省的颜色
-            if (textObject.getFillColor() == null
-                    && ctDrawParam.getFillColor() != null) {
+            if (textObject.getFillColor() == null && ctDrawParam.getFillColor() != null) {
                 fillColor = convertPDColor(ctDrawParam.getFillColor().getValue());
             }
         }
 
-
-        // 加载字体
         CT_Font ctFont = resMgt.getFont(textObject.getFont().toString());
-        PDFont font = getFont(ctFont);
+        BaseFont font = getFont(ctFont);
 
         List<TextCodePoint> textCodePointList = PointUtil.calPdfTextCoordinate(box.getWidth(), box.getHeight(), textObject.getBoundary(), fontSize, textObject.getTextCodes(), textObject.getCTM() != null, textObject.getCTM(), true, scale);
         for (TextCodePoint textCodePoint : textCodePointList) {
-            contentStream.saveGraphicsState();
+            contentStream.saveState();
             contentStream.beginText();
-            contentStream.setNonStrokingColor(fillColor);
-            contentStream.setTextMatrix(textMatrix(textObject, textCodePoint));
-            contentStream.setFont(font, (float) converterDpi(fontSize));
+            contentStream.setColorFill(fillColor);
+            float[] tm = textMatrix(textObject, textCodePoint);
+            contentStream.setTextMatrix(tm[0], tm[1], tm[2], tm[3], tm[4], tm[5]);
+            contentStream.setFontAndSize(font, (float) converterDpi(fontSize));
             try {
                 contentStream.showText(textCodePoint.getText());
             } catch (Exception e) {
-
+                logger.debug("showText failed: {}", e.getMessage());
             }
             contentStream.endText();
-            contentStream.restoreGraphicsState();
+            contentStream.restoreState();
         }
-
     }
 
-    static Matrix textMatrix(TextObject textObject, TextCodePoint textCodePoint) {
+    /**
+     * 计算文本矩阵（列优先，与 PDFBox 2D Matrix 构造方式一致）
+     */
+    static float[] textMatrix(TextObject textObject, TextCodePoint textCodePoint) {
         double a = 1;
         double b = 0;
         double c = 0;
         double d = 1;
         if (textObject.getCTM() != null) {
             Double[] ctm = textObject.getCTM().toDouble();
-            // Character positions already contain the complete CTM. Tm only needs its linear
-            // part, converted from OFD's downward Y axis to PDF text space's upward Y axis.
             a = ctm[0];
             b = -ctm[1];
             c = -ctm[2];
@@ -904,82 +779,53 @@ public class PdfboxMaker {
         double matrixB = (b * charA + d * charB) * hScale;
         double matrixC = a * charC + c * charD;
         double matrixD = b * charC + d * charD;
-        return new Matrix((float) matrixA, (float) matrixB, (float) matrixC, (float) matrixD,
-                (float) textCodePoint.getX(), (float) textCodePoint.getY());
+        // OpenPDF 1.3.x 无独立 TextMatrix 类型，setTextMatrix 直接接受 6 个 float 参数
+        return new float[]{
+                (float) matrixA, (float) matrixB, (float) matrixC, (float) matrixD,
+                (float) textCodePoint.getX(), (float) textCodePoint.getY()
+        };
     }
 
     /**
      * 添加附件
-     *
-     * @param ofdReader OFD解析器
-     * @throws IOException IO异常
      */
     public void addAttachments(OFDReader ofdReader) throws IOException {
-        // 获取OFD中所有附件
         List<CT_Attachment> attachmentList = ofdReader.getAttachmentList();
         if (attachmentList == null || attachmentList.isEmpty()) {
             return;
         }
-        PDEmbeddedFilesNameTreeNode efTree = new PDEmbeddedFilesNameTreeNode();
-        Map<String, PDComplexFileSpecification> efMap = new HashMap<>();
         for (CT_Attachment attachment : attachmentList) {
-            PDComplexFileSpecification fs = new PDComplexFileSpecification();
             Path attFile = ofdReader.getAttachmentFile(attachment);
-            // 文件名传
-            fs.setFile(attachment.getAttachmentName());
-            fs.setFileUnicode(attachment.getAttachmentName());
-            // 文件流，该流将由PDEmbeddedFile内部关闭
-            PDEmbeddedFile ef = new PDEmbeddedFile(pdf, Files.newInputStream(attFile));
-            // 文件类型
-            ef.setSubtype(attachment.getFormat());
-            ef.setSize((int) Files.size(attFile));
-
+            byte[] fileBytes = Files.readAllBytes(attFile);
+            String fileName = attFile.getFileName().toString();
+            final String attachmentName = attachment.getAttachmentName();
+            String displayFileName = attachmentName == null || attachmentName.isEmpty() ? fileName :
+                    attachmentName.concat(fileName.contains(".") ?
+                            fileName.substring(fileName.lastIndexOf(".")) : "");
             try {
-                Calendar calendar = Calendar.getInstance();
-                // 设置创建时间
-                LocalDateTime creationDate = attachment.getCreationDateTime();
-                Date date = Date.from(creationDate.atZone(ZoneId.systemDefault()).toInstant());
-                calendar.setTime(date);
-                ef.setCreationDate(calendar);
-            }catch (Exception e){
-                logger.info("无法获取附件创建时间 {} : {}",attachment.attributeValue("CreationDate") ,attachment.getAttachmentName(), e);
+                PdfFileSpecification fs = PdfFileSpecification.fileEmbedded(
+                        pdfWriter, fileName, displayFileName, fileBytes);
+                if (attachment.getFormat() != null) {
+                    fs.put(PdfName.SUBTYPE, new PdfName(attachment.getFormat()));
+                }
+                pdfWriter.addFileAttachment(displayFileName, fs);
+            } catch (Exception e) {
+                logger.warn("Failed to attach file {}: {}", displayFileName, e.getMessage());
             }
-
-            fs.setEmbeddedFile(ef);
-            efMap.put(attachment.getAttachmentName(), fs);
         }
-        efTree.setNames(efMap);
-        PDDocumentNameDictionary names = new PDDocumentNameDictionary(pdf.getDocumentCatalog());
-        names.setEmbeddedFiles(efTree);
-        pdf.getDocumentCatalog().setNames(names);
     }
 
     /**
      * 通过字体信息获取字体对象
-     * @param ctFont
-     * @param fontPath
-     * @param embedSubset
-     * @return
-     * @throws IOException
      */
-    private TrueTypeFont getTrueTypeFont(CT_Font ctFont,Path fontPath,boolean embedSubset) throws IOException {
+    private TrueTypeFont getTrueTypeFont(CT_Font ctFont, Path fontPath) throws IOException {
         ByteArrayInputStream fontStream = new ByteArrayInputStream(Files.readAllBytes(fontPath));
         String name = fontPath.toFile().getName().toLowerCase();
         TrueTypeFont ttf = null;
         if (name.endsWith(".ttf")) {
-            try {
-                ttf = new TTFParser(embedSubset).parse(fontStream);
-            } catch (Exception ex) {
-                ttf = new TTFParser(!embedSubset).parse(fontStream);
-            }
-
+            ttf = new TTFParser(false).parse(fontStream);
         } else if (name.endsWith(".otf")) {
-            try {
-                ttf = new OTFParser(embedSubset).parse(fontStream);
-            } catch (Exception ex) {
-                ttf = new OTFParser(!embedSubset).parse(fontStream);
-            }
-
+            ttf = new OTFParser(false).parse(fontStream);
         } else if (name.endsWith(".ttc")) {
             TrueTypeCollection ttc = new TrueTypeCollection(fontStream);
             if (ttc != null) {
@@ -988,7 +834,6 @@ public class PdfboxMaker {
                     String alias = FontLoader.getInstance().getFontAlias(ctFont);
                     ttf = ttc.getFontByName(alias);
                 }
-                embedSubset = true;
                 ttc.close();
             }
         } else {
@@ -997,76 +842,72 @@ public class PdfboxMaker {
         return ttf;
     }
 
-
     /**
      * 加载字体
-     * 
-     * @param ctFont 字体对象
-     * @return
-     * @throws IOException
      */
-    private PDFont loadFont(CT_Font ctFont) throws IOException {
-        // 字体是否嵌入
-        boolean embedSubset = false;
-
-        // 获取嵌入式字体路径
+    private BaseFont loadFont(CT_Font ctFont) throws IOException {
+        // Resolve the font file path: try OFD-embedded first, then system-similar, then default.
         Path fontPath = null;
-        TrueTypeFont ttf = null;
         if (ctFont != null && ctFont.getFontFile() != null) {
-            // 内嵌字体绝对路径
             try {
                 ResourceLocator resourceLocator = reader.getResourceLocator();
-                fontPath = resourceLocator.getFile(ctFont.getFontFile()).toAbsolutePath();
+                Path embedded = resourceLocator.getFile(ctFont.getFontFile()).toAbsolutePath();
+                if (Files.exists(embedded)) {
+                    fontPath = embedded;
+                }
             } catch (Exception e) {
-                logger.warn(
-                    "无法加载内嵌字体: " + ctFont.getFamilyName() + " " + ctFont.getFontName() + " " + ctFont.getFontFile(), e);
+                logger.warn("无法加载内嵌字体: " + ctFont.getFamilyName() + " " + ctFont.getFontName() + " " + ctFont.getFontFile(), e);
             }
         }
-        if (fontPath != null) {
-            embedSubset = true;
-            ttf=getTrueTypeFont(ctFont, fontPath, embedSubset);
-        }
-        // 如果内嵌字体的OS/2 Table为空, 则尝试使用系统字体替代
-        if ( ttf == null || ttf.getOS2Windows() == null) {
-            // 获取系统字体
-            String systemFontPath = FontLoader.getInstance().getReplaceSimilarFontPath(ctFont.getFamilyName(),
-                    ctFont.getFontName());
+        if (fontPath == null) {
+            String systemFontPath = FontLoader.getInstance().getReplaceSimilarFontPath(
+                    ctFont.getFamilyName(), ctFont.getFontName());
             if (systemFontPath != null) {
                 fontPath = Paths.get(systemFontPath);
-                ttf = getTrueTypeFont(ctFont, fontPath, embedSubset);
-                if (ttf !=null ) {
-                    logger.debug("内嵌字体OS/2 Table为null， 使用系统字体替代: " + ttf.getName());
-                }
             }
         }
-        if (ttf == null || ttf.getOS2Windows() == null) {
-            // 获取默认字体
+        if (fontPath == null || !Files.exists(fontPath)) {
             fontPath = FontLoader.getInstance().getDefaultFontPath();
-            ttf = getTrueTypeFont(ctFont, fontPath, embedSubset);
-            if (ttf !=null ) {
-                logger.debug("使用默认字体: " + ttf.getName());
-            }
+        }
+        if (fontPath == null || !Files.exists(fontPath)) {
+            return defaultFont;
         }
 
-        // embedSubset设置为true ,使用裁剪字库，减小生成的PDF文件大小
-        PDFont font = PDType0Font.load(pdf, ttf, true);
-        return font;
+        // Use fontbox TTF parse to validate the font and read its OS/2 table.
+        // The TTF parse also surfaces issues that would otherwise corrupt the PDF.
+        try (TrueTypeFont ttf = getTrueTypeFont(ctFont, fontPath)) {
+            if (ttf == null || ttf.getOS2Windows() == null) {
+                logger.debug("Font missing OS/2 Windows table, falling back: {}",
+                        fontPath.getFileName());
+                return defaultFont;
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to parse font {}: {}", fontPath, e.getMessage());
+            return defaultFont;
+        }
+
+        try {
+            return BaseFont.createFont(fontPath.toAbsolutePath().toString(),
+                    BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
+        } catch (Exception e) {
+            logger.warn("BaseFont.createFont failed for {}: {}", fontPath, e.getMessage());
+            return defaultFont;
+        }
     }
 
     /**
-     * 加载字体
-     *
-     * @param ctFont 字体对象
-     * @return 字体
+     * 加载字体（带缓存）
      */
-    private PDFont getFont(CT_Font ctFont) {
-        String key = String.format("%s_%s_%s", ctFont.getFamilyName(), ctFont.getFontName(), ctFont.getFontFile());
+    private BaseFont getFont(CT_Font ctFont) {
+        String key = String.format("%s_%s_%s",
+                ctFont == null ? "null" : ctFont.getFamilyName(),
+                ctFont == null ? "null" : ctFont.getFontName(),
+                ctFont == null ? "null" : ctFont.getFontFile());
         if (fontCache.containsKey(key)) {
             return fontCache.get(key);
         }
         try {
-            // 加载字体
-            PDFont font = loadFont(ctFont);
+            BaseFont font = loadFont(ctFont);
             fontCache.put(key, font);
             return font;
         } catch (Exception e) {
@@ -1079,12 +920,8 @@ public class PdfboxMaker {
 
     /**
      * 设置默认字体
-     * <p>
-     * 当无法获取字体时将返回此字体
-     *
-     * @param font 默认字体
      */
-    public void setDefaultFont(PDFont font) {
+    public void setDefaultFont(BaseFont font) {
         if (font != null) {
             this.defaultFont = font;
         }
@@ -1092,10 +929,8 @@ public class PdfboxMaker {
 
     /**
      * 获取默认字体
-     *
-     * @return 默认字体
      */
-    public PDFont getDefaultFont() {
+    public BaseFont getDefaultFont() {
         return defaultFont;
     }
 }

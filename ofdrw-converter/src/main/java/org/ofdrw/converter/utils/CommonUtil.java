@@ -1,12 +1,7 @@
 package org.ofdrw.converter.utils;
 
 import com.itextpdf.kernel.colors.DeviceRgb;
-import org.apache.pdfbox.jbig2.JBIG2ImageReader;
-import org.apache.pdfbox.jbig2.JBIG2ImageReaderSpi;
-import org.apache.pdfbox.jbig2.io.DefaultInputStreamFactory;
-import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
-import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceGray;
-import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceRGB;
+
 import org.ofdrw.converter.point.Tuple2;
 import org.ofdrw.core.basicStructure.doc.CT_PageArea;
 import org.ofdrw.core.basicStructure.pageObj.layer.block.ImageObject;
@@ -16,11 +11,8 @@ import org.ofdrw.core.pageDescription.color.color.CT_Color;
 import org.ofdrw.reader.ResourceManage;
 import org.ujmp.core.Matrix;
 
-import javax.imageio.ImageIO;
-import javax.imageio.stream.ImageInputStream;
-import java.awt.*;
-import java.awt.image.BufferedImage;
-import java.io.*;
+import java.awt.Color;
+import java.awt.geom.AffineTransform;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -96,8 +88,8 @@ public class CommonUtil {
         return CommonUtil.millimetersToPixel(len, 72);
     }
 
-    public static PDColor convertPDColor(ST_Array colorArray) {
-        PDColor color = null;
+    public static Color convertPDColor(ST_Array colorArray) {
+        Color color = null;
         String colorStr = colorArray.toString();
         if (colorStr.indexOf("#") != -1) {
             String[] rgbStr = colorStr.split(" ");
@@ -114,19 +106,22 @@ public class CommonUtil {
                 if (b.length() == 1) {
                     b += "0";
                 }
-                Color jColor = Color.decode(String.format("#%s%s%s", r, g, b));
-                color = new PDColor(new float[]{
-                        jColor.getRed() / 255f,
-                        jColor.getGreen() / 255f,
-                        jColor.getBlue() / 255f}, PDDeviceRGB.INSTANCE);
+                java.awt.Color jColor = java.awt.Color.decode(String.format("#%s%s%s", r, g, b));
+                color = new Color(
+                        jColor.getRed(),
+                        jColor.getGreen(),
+                        jColor.getBlue());
             }
         } else {
             float[] colors = CommonUtil.doubleArrayToFloatArray(colorArray.toDouble());
             if (colors.length == 3) {
-                color = new PDColor(new float[]{(int) colors[0] / 255f, (int) colors[1] / 255f, (int) colors[2] / 255f},
-                        PDDeviceRGB.INSTANCE);
+                color = new Color(
+                        (int) colors[0],
+                        (int) colors[1],
+                        (int) colors[2]);
             } else if (colors.length == 1) {
-                color = new PDColor(new float[]{(int) colors[0] / 255f}, PDDeviceGray.INSTANCE);
+                int v = (int) colors[0];
+                color = new Color(v, v, v);
             }
         }
         return color;
@@ -161,19 +156,6 @@ public class CommonUtil {
         String matrix = String.format("matrix(%f %f %f %f %f %f)", a, b, c, d, converterDpi(e), converterDpi(f));
         return matrix;
     }
-
-    public static byte[] converJbig2(File imgFile) throws IOException {
-        JBIG2ImageReader imageReader = new JBIG2ImageReader(new JBIG2ImageReaderSpi());
-        InputStream inputStream = new FileInputStream(imgFile);
-        DefaultInputStreamFactory disf = new DefaultInputStreamFactory();
-        ImageInputStream imageInputStream = disf.getInputStream(inputStream);
-        imageReader.setInput(imageInputStream);
-        BufferedImage bufferedImage = imageReader.read(0, imageReader.getDefaultReadParam());
-        ByteArrayOutputStream bosImage = new ByteArrayOutputStream();
-        ImageIO.write(bufferedImage, "PNG", bosImage);
-        return bosImage.toByteArray();
-    }
-
 
     public static long convertV1SignTime(String time) throws ParseException {
         SimpleDateFormat var1;
@@ -283,15 +265,14 @@ public class CommonUtil {
         return matrix;
     }
 
-    public static org.apache.pdfbox.util.Matrix toPFMatrix(Matrix source) {
-        org.apache.pdfbox.util.Matrix target = new org.apache.pdfbox.util.Matrix();
-        target.setValue(0, 0, source.getAsFloat(0, 0));
-        target.setValue(0, 1, source.getAsFloat(0, 1));
-        target.setValue(1, 0, source.getAsFloat(1, 0));
-        target.setValue(1, 1, source.getAsFloat(1, 1));
-        target.setValue(2, 0, source.getAsFloat(2, 0));
-        target.setValue(2, 1, source.getAsFloat(2, 1));
-        return target;
+    public static AffineTransform toPFMatrix(Matrix source) {
+        return new AffineTransform(
+                source.getAsFloat(0, 0),
+                source.getAsFloat(0, 1),
+                source.getAsFloat(1, 0),
+                source.getAsFloat(1, 1),
+                source.getAsFloat(2, 0),
+                source.getAsFloat(2, 1));
     }
 
     //    private static PDFont getCFFFont(PDDocument doc, File fontFile)

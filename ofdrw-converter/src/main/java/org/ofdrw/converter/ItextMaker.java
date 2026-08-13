@@ -741,13 +741,18 @@ public class ItextMaker {
             float height = annotBox.getHeight().floatValue();
             pdfCanvas.addImageWithTransformationMatrix(image, (float) converterDpi(width), 0, 0, (float) converterDpi(height), (float) converterDpi(x), (float) converterDpi(y));
         } else {
-            org.apache.pdfbox.util.Matrix matrix = CommonUtil.toPFMatrix(CommonUtil.getImageMatrixFromOfd(imageObject, box, compositeObjectCTM));
-            float a = matrix.getValue(0, 0);
-            float b = matrix.getValue(0, 1);
-            float c = matrix.getValue(1, 0);
-            float d = matrix.getValue(1, 1);
-            float e = matrix.getValue(2, 0);
-            float f = matrix.getValue(2, 1);
+            org.ofdrw.converter.point.Tuple2<Float, Float>[] matrix = null;
+            java.awt.geom.AffineTransform affineAw = CommonUtil.toPFMatrix(CommonUtil.getImageMatrixFromOfd(imageObject, box, compositeObjectCTM));
+            com.itextpdf.kernel.geom.AffineTransform affine = new com.itextpdf.kernel.geom.AffineTransform(
+                    affineAw.getScaleX(), affineAw.getShearY(),
+                    affineAw.getShearX(), affineAw.getScaleY(),
+                    affineAw.getTranslateX(), affineAw.getTranslateY());
+            float a = (float) affine.getScaleX();
+            float b = (float) affine.getShearY();
+            float c = (float) affine.getShearX();
+            float d = (float) affine.getScaleY();
+            float e = (float) affine.getTranslateX();
+            float f = (float) affine.getTranslateY();
             pdfCanvas.addImageWithTransformationMatrix(image, a, b, c, d, e, f);
         }
         pdfCanvas.restoreState();

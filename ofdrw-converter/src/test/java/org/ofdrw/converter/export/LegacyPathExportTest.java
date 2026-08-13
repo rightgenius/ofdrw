@@ -1,34 +1,42 @@
 package org.ofdrw.converter.export;
 
-import org.apache.pdfbox.contentstream.operator.Operator;
-import org.apache.pdfbox.cos.COSNumber;
-import org.apache.pdfbox.pdfparser.PDFStreamParser;
-import org.apache.pdfbox.pdmodel.PDDocument;
+import com.lowagie.text.pdf.PRTokeniser;
+import com.lowagie.text.pdf.PdfObject;
+import com.lowagie.text.pdf.PdfReader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+/**
+ * 验证 OFD 旧版"绝对路径"导出到 PDF 时, 路径位置和线宽保持原有精度。
+ * <p>
+ * 原本依赖 PDFBox 的 {@code PDFStreamParser};重构后使用 OpenPDF 的
+ * {@link PdfReader} + {@link PRTokeniser} 直接读 content stream 的字节,
+ * 避开 {@code PdfContentReaderTool} 在 OpenPDF 1.3.39 中的渲染 bug。
+ */
 class LegacyPathExportTest {
 
     @TempDir
     Path tempDir;
 
     @Test
-    void pdfBoxKeepsLegacyPathPositionAndLineWidth() throws Exception {
+    void openPdfKeepsLegacyPathPositionAndLineWidth() throws Exception {
         assertLegacyPath(new PDFExporterFactory() {
             @Override
             public OFDExporter create(Path ofd, Path pdf) throws IOException {
-                return new PDFExporterPDFBox(ofd, pdf);
+                return new PDFExporterOpenPDF(ofd, pdf);
             }
-        }, "pdfbox");
+        }, "openpdf");
     }
 
     @Test
@@ -49,24 +57,69 @@ class LegacyPathExportTest {
             exporter.export();
         }
 
-        try (PDDocument document = PDDocument.load(pdf.toFile())) {
-            PDFStreamParser parser = new PDFStreamParser(document.getPage(0));
-            parser.parse();
-            List<Object> tokens = parser.getTokens();
-            assertEquals(1.35467d, operand(tokens, "w", 1, 0), 0.01d);
-            assertEquals(456d * 72d / 300d, operand(tokens, "m", 2, 0), 0.001d);
-            assertEquals(486d * 72d / 300d, operand(tokens, "l", 2, 0), 0.001d);
+        List<String> contentStream = readContentStream(pdf);
+        assertEquals(1.35467d, operandBefore(contentStream, "w", 1, 0), 0.01d);
+        assertEquals(456d * 72d / 300d, operandBefore(contentStream, "m", 2, 0), 0.001d);
+        assertEquals(486d * 72d / 300d, operandBefore(contentStream, "l", 2, 0), 0.001d);
+    }
+
+    /**
+     * 用 {@link PdfReader} + {@link PRTokeniser} 把 content stream 切成
+     * "操作数 / 操作符" 形式的字符串列表。<br>
+     * 这是 PDFBox {@code PDFStreamParser.getTokens()} 的最小替代,
+     * 足够验证 {@code w} / {@code m} / {@code l} 等单字操作符前的数字。
+     */
+    private static List<String> readContentStream(Path pdf) throws IOException {
+        List<String> tokens = new ArrayList<>();
+        try (PdfReader reader = new PdfReader(pdf.toAbsolutePath().toString())) {
+            byte[] contentBytes = reader.getPageContent(1);
+            if (contentBytes == null) {
+                return tokens;
+            }
+            // PRTokeniser consumes its buffer fully; copy first since getPageContent
+            // may return a shared buffer that the reader will release on close.
+            byte[] buf = contentBytes.clone();
+            try (PRTokeniser tok = new PRTokeniser(buf)) {
+                while (tok.nextToken()) {
+                    int t = tok.getTokenType();
+                    if (t == PRTokeniser.TK_ENDOFFILE) {
+                        break;
+                    }
+                    String value = tokenToString(tok, t);
+                    if (value != null) {
+                        tokens.add(value);
+                    }
+                }
+            }
+        }
+        return tokens;
+    }
+
+    private static String tokenToString(PRTokeniser tok, int type) {
+        switch (type) {
+            case PRTokeniser.TK_NUMBER:
+                return tok.getStringValue();
+            case PRTokeniser.TK_STRING:
+                return "(" + tok.getStringValue() + ")";
+            case PRTokeniser.TK_NAME:
+                return "/" + tok.getStringValue();
+            case PRTokeniser.TK_OTHER:
+                return tok.getStringValue();
+            case PRTokeniser.TK_REF:
+                return tok.getStringValue();
+            default:
+                return null; // TK_COMMENT, TK_START_*, TK_END_* not relevant here
         }
     }
 
-    private static double operand(List<Object> tokens, String operator, int operandCount, int operandIndex) {
+    private static double operandBefore(List<String> tokens, String operator, int operandCount, int operandIndex) {
         for (int i = 0; i < tokens.size(); i++) {
-            Object token = tokens.get(i);
-            if (token instanceof Operator && operator.equals(((Operator) token).getName())) {
-                return ((COSNumber) tokens.get(i - operandCount + operandIndex)).doubleValue();
+            if (operator.equals(tokens.get(i))) {
+                int operandPos = i - operandCount + operandIndex;
+                return Double.parseDouble(tokens.get(operandPos));
             }
         }
-        throw new AssertionError("Missing PDF operator: " + operator);
+        throw new AssertionError("Missing PDF operator: " + operator + " in tokens: " + tokens);
     }
 
     private static void createLegacyPathOFD(Path output) throws IOException {

@@ -1,8 +1,9 @@
 package org.ofdrw.converter.export;
 
-import org.apache.pdfbox.pdmodel.PDDocument;
+import com.lowagie.text.Document;
+import com.lowagie.text.pdf.PdfWriter;
 import org.ofdrw.converter.GeneralConvertException;
-import org.ofdrw.converter.PdfboxMaker;
+import org.ofdrw.converter.OpenPdfMaker;
 import org.ofdrw.reader.OFDReader;
 import org.ofdrw.reader.PageInfo;
 
@@ -15,12 +16,12 @@ import java.util.LinkedList;
 import java.util.List;
 
 /**
- * PDFBox 实现的OFD转换PDF
- *
- * @author 权观宇
- * @since 2023-3-7 21:30:40
+ * OpenPDF 实现的 OFD 转 PDF 导出器
+ * <p>
+ * 取代 {@link PDFExporterPDFBox}。OpenPDF 是 LGPL、无 AWT 运行时依赖，
+ * 适合 native-image 打包场景。
  */
-public class PDFExporterPDFBox implements OFDExporter {
+public class PDFExporterOpenPDF implements OFDExporter {
 
     /**
      * OFD解析器
@@ -30,17 +31,23 @@ public class PDFExporterPDFBox implements OFDExporter {
     /**
      * PDF文档对象
      */
-    final PDDocument pdfDoc;
+    final Document pdfDoc;
+
+    /**
+     * PDF写入器
+     */
+    final PdfWriter pdfWriter;
 
     /**
      * PDF转换器
      */
-    final PdfboxMaker pdfMaker;
+    final OpenPdfMaker pdfMaker;
 
     /**
      * 导出流
      */
     OutputStream outputStream;
+
     /**
      * 导出的文件路径
      */
@@ -51,18 +58,8 @@ public class PDFExporterPDFBox implements OFDExporter {
      */
     private boolean closed = false;
 
-
-    /**
-     * 通过文件路径 创建PDF转换器
-     *
-     * @param ofdFilePath 待转换的OFD文件路径
-     * @param pdfFilePath 生成PDF文件路径
-     * @throws IOException 文件创建失败
-     */
-    public PDFExporterPDFBox(Path ofdFilePath, Path pdfFilePath) throws IOException {
+    public PDFExporterOpenPDF(Path ofdFilePath, Path pdfFilePath) throws IOException {
         ofdReader = new OFDReader(ofdFilePath);
-        pdfDoc = new PDDocument();
-        pdfMaker = new PdfboxMaker(this.ofdReader, pdfDoc);
         if (pdfFilePath == null) {
             throw new IllegalArgumentException("导出PDF路径为空");
         }
@@ -79,33 +76,22 @@ public class PDFExporterPDFBox implements OFDExporter {
             Files.createFile(pdfFilePath);
         }
         this.outputPath = pdfFilePath;
+        this.pdfDoc = new Document();
+        this.pdfWriter = PdfWriter.getInstance(pdfDoc, Files.newOutputStream(pdfFilePath));
+        this.pdfMaker = new OpenPdfMaker(ofdReader, pdfDoc, pdfWriter);
     }
 
-    /**
-     * 通过流 创建PDF转换器
-     * <p>
-     * 注意：流由调用者负责关闭！
-     *
-     * @param ofdInStream  待转换的OFD文件流，流由调用者负责关闭。
-     * @param pdfOutStream 生成PDF文件流，流由调用者负责关闭。
-     * @throws IOException 流操作失败
-     */
-    public PDFExporterPDFBox(InputStream ofdInStream, OutputStream pdfOutStream) throws IOException {
+    public PDFExporterOpenPDF(InputStream ofdInStream, OutputStream pdfOutStream) throws IOException {
         ofdReader = new OFDReader(ofdInStream);
-        pdfDoc = new PDDocument();
-        pdfMaker = new PdfboxMaker(this.ofdReader, pdfDoc);
         if (pdfOutStream == null) {
             throw new IllegalArgumentException("导出PDF流为空");
         }
         this.outputStream = pdfOutStream;
+        this.pdfDoc = new Document();
+        this.pdfWriter = PdfWriter.getInstance(pdfDoc, pdfOutStream);
+        this.pdfMaker = new OpenPdfMaker(ofdReader, pdfDoc, pdfWriter);
     }
 
-    /**
-     * 导出指定OFD页
-     *
-     * @param indexes 页码序列，如果为空表示全部页码（注意：页码从0起）
-     * @throws GeneralConvertException 导出异常
-     */
     @Override
     public void export(int... indexes) throws GeneralConvertException {
         try {
@@ -114,7 +100,6 @@ public class PDFExporterPDFBox implements OFDExporter {
                 targetPages.addAll(ofdReader.getPageList());
             } else {
                 int maxPageIndex = ofdReader.getNumberOfPages();
-                // 获取指定页面信息
                 for (int index : indexes) {
                     if (index < 0 || index >= maxPageIndex) {
                         continue;
@@ -122,8 +107,7 @@ public class PDFExporterPDFBox implements OFDExporter {
                     targetPages.add(ofdReader.getPageInfo(index));
                 }
             }
-            // 循环添加Page
-            targetPages = ofdReader.getPageList();
+            pdfDoc.open();
             for (PageInfo pageInfo : targetPages) {
                 pdfMaker.makePage(pageInfo);
             }
@@ -132,13 +116,6 @@ public class PDFExporterPDFBox implements OFDExporter {
         }
     }
 
-    /**
-     * 关闭所有打开的文件
-     * <p>
-     * 并把附件添加到PDF文件中
-     *
-     * @throws IOException 文件关闭异常
-     */
     @Override
     public void close() throws IOException {
         if (closed) {
@@ -147,20 +124,11 @@ public class PDFExporterPDFBox implements OFDExporter {
         closed = true;
 
         if (pdfMaker != null && pdfDoc != null && ofdReader != null) {
-            // 添加附件
             pdfMaker.addAttachments(ofdReader);
-            // 存储到文件中
-            if (outputPath != null) {
-                pdfDoc.save(this.outputPath.toFile());
-            } else if (outputStream != null) {
-                pdfDoc.save(outputStream);
-            }
         }
-
-        if (pdfDoc != null) {
+        if (pdfDoc != null && pdfDoc.isOpen()) {
             pdfDoc.close();
         }
-
         if (ofdReader != null) {
             ofdReader.close();
         }

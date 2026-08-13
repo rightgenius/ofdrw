@@ -4,7 +4,7 @@ import org.ofdrw.converter.ConvertHelper;
 import org.ofdrw.converter.FontLoader;
 import org.ofdrw.converter.GeneralConvertException;
 import org.ofdrw.converter.export.OFDExporter;
-import org.ofdrw.converter.export.PDFExporterPDFBox;
+import org.ofdrw.converter.export.PDFExporterOpenPDF;
 import org.ofdrw.graphics2d.OFDGraphicsDocument;
 import org.ofdrw.graphics2d.OFDPageGraphics2D;
 
@@ -98,7 +98,7 @@ public class OFD2PDFTest {
             g.drawString("你好OFD Reader & Writer Graphics-2D", 40, 40);
         }
         Path pdfPath = Paths.get("target","HelloWorld.pdf");
-        try (OFDExporter exporter = new PDFExporterPDFBox(dst, pdfPath)) {
+        try (OFDExporter exporter = new PDFExporterOpenPDF(dst, pdfPath)) {
             exporter.export();
         }
     }
@@ -111,7 +111,7 @@ public class OFD2PDFTest {
         Path dst = Paths.get("src/test/resources/containsJPEG.ofd");
         Assertions.assertNotNull(dst);
         Path pdfPath = Paths.get("target/containsJPEG.pdf");
-        try (OFDExporter exporter = new PDFExporterPDFBox(dst, pdfPath)) {
+        try (OFDExporter exporter = new PDFExporterOpenPDF(dst, pdfPath)) {
             exporter.export();
         }
     }

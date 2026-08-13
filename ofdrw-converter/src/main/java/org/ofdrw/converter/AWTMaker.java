@@ -1,8 +1,6 @@
 package org.ofdrw.converter;
 
 import org.apache.commons.lang3.math.NumberUtils;
-import org.apache.pdfbox.pdmodel.graphics.blend.BlendComposite;
-import org.apache.pdfbox.pdmodel.graphics.blend.BlendMode;
 import org.ofdrw.converter.font.FontWrapper;
 import org.ofdrw.converter.font.GlyphData;
 import org.ofdrw.converter.font.TrueTypeFont;
@@ -177,7 +175,7 @@ public abstract class AWTMaker {
                             (int) (stampImage.getWidth() * m1.getAsDouble(0, 0) * (clip.getWidth() / stBox.getWidth())),
                             (int) (stampImage.getHeight() * m1.getAsDouble(1, 1) * (clip.getHeight() / stBox.getHeight())));
                 }
-                graphics.setComposite(BlendComposite.getInstance(BlendMode.MULTIPLY, 1));
+                graphics.setComposite(MultiplyComposite.INSTANCE);
                 graphics.drawImage(stampImage, MatrixUtils.createAffineTransform(m), null);
             }
         } catch (Exception e) {
@@ -973,6 +971,62 @@ public abstract class AWTMaker {
 
         public void setClip(boolean clip) {
             this.clip = clip;
+        }
+    }
+
+    /**
+     * 纯 AWT 实现的 "正片叠底" (Multiply) 混合模式。
+     * <p>
+     * 用于在 {@link #drawStamp(java.awt.Graphics2D, StampAnnotEntity)} 中叠加印章时,
+     * 模拟 PDFBox {@code BlendComposite.getInstance(BlendMode.MULTIPLY, 1)} 的视觉效果。
+     * <p>
+     * 替换 Apache PDFBox 的 {@code org.apache.pdfbox.pdmodel.graphics.blend.BlendComposite},
+     * 不引入额外依赖;基于 Java2D {@link java.awt.Composite} 接口实现,
+     * 每个目标像素 = 源像素 * 目标像素 / 255 (每通道独立相乘)。
+     */
+    private static final class MultiplyComposite implements java.awt.Composite {
+        static final MultiplyComposite INSTANCE = new MultiplyComposite();
+
+        private MultiplyComposite() {
+        }
+
+        @Override
+        public java.awt.CompositeContext createContext(java.awt.image.ColorModel srcColorModel,
+                                                       java.awt.image.ColorModel dstColorModel,
+                                                       java.awt.RenderingHints hints) {
+            return new java.awt.CompositeContext() {
+                @Override
+                public void dispose() {
+                }
+
+                @Override
+                public void compose(java.awt.image.Raster src, java.awt.image.Raster dstIn,
+                                    java.awt.image.WritableRaster dstOut) {
+                    int width = Math.min(src.getWidth(), dstIn.getWidth());
+                    int height = Math.min(src.getHeight(), dstIn.getHeight());
+                    int[] srcPx = new int[4];
+                    int[] dstPx = new int[4];
+                    int[] outPx = new int[4];
+                    for (int y = 0; y < height; y++) {
+                        for (int x = 0; x < width; x++) {
+                            src.getPixel(x, y, srcPx);
+                            dstIn.getPixel(x, y, dstPx);
+                            int sa = srcPx[3];
+                            int da = dstPx[3];
+                            for (int c = 0; c < 3; c++) {
+                                int sc = srcPx[c];
+                                int dc = dstPx[c];
+                                // 预乘 (a * b) / 255;结果用整数运算,等价 PDF MULTIPLY 公式
+                                int blended = (sc * dc) / 255;
+                                // 标准 OVER 合成:out = src + dst * (1 - srcAlpha)
+                                outPx[c] = (blended * sa + dc * (255 - sa)) / 255;
+                            }
+                            outPx[3] = sa + (da * (255 - sa)) / 255;
+                            dstOut.setPixel(x, y, outPx);
+                        }
+                    }
+                }
+            };
         }
     }
 }
