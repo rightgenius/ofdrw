@@ -1,7 +1,9 @@
 package org.ofdrw.gm.sm2strut;
 
 import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.crypto.CryptoException;
 import org.bouncycastle.crypto.digests.SM3Digest;
+import org.bouncycastle.crypto.params.ECPrivateKeyParameters;
 import org.bouncycastle.crypto.params.ECPublicKeyParameters;
 import org.bouncycastle.crypto.signers.SM2Signer;
 import org.bouncycastle.crypto.util.PublicKeyFactory;
@@ -63,6 +65,25 @@ public final class GmVerifyHelper {
         signer.init(false, pubKey);
         signer.update(plaintext, 0, plaintext.length);
         return signer.verifySignature(signature);
+    }
+
+    /**
+     * SM3withSM2 签名（GB/T 35275 标准）
+     * <p>
+     * 与 {@link #sm3WithSm2Verify(X509CertificateHolder, byte[], byte[])} 配对。
+     * 走 BC 轻量级 API，绕开 JCE provider 校验。
+     *
+     * @param privateKey SM2 私钥
+     * @param plaintext  待签原文（GB/T 35275 是 authenticated-attributes 的 DER 编码）
+     * @return 签名值（密文摘要，未 DER 编码；与 {@code Signature.sign()} 输出一致）
+     * @throws CryptoException 签名生成失败
+     * @since 2.4.0-openpdf.6
+     */
+    public static byte[] sm3WithSm2Sign(ECPrivateKeyParameters privateKey, byte[] plaintext) throws CryptoException {
+        SM2Signer signer = new SM2Signer();
+        signer.init(true, privateKey);
+        signer.update(plaintext, 0, plaintext.length);
+        return signer.generateSignature();
     }
 
     /**

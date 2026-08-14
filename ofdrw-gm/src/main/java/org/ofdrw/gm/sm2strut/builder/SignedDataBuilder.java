@@ -5,6 +5,7 @@ import org.bouncycastle.asn1.ASN1Set;
 import org.bouncycastle.asn1.DEROctetString;
 import org.bouncycastle.asn1.DERSet;
 import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
+import org.bouncycastle.cert.X509CertificateHolder;
 import org.ofdrw.gm.cert.CertTools;
 import org.ofdrw.gm.sm2strut.*;
 
@@ -51,6 +52,57 @@ public final class SignedDataBuilder {
         ArrayList<CertSigHolder> certSigArr = new ArrayList<>(1);
         certSigArr.add(new CertSigHolder(signature, certificate));
         return signedData(plaintext, certSigArr, null);
+    }
+
+    /**
+     * 组装 签名数据类型（BC 轻量级 API 版本）
+     * <p>
+     * 与 {@link #signedData(byte[], byte[], Certificate)} 行为一致，
+     * 但接收 {@link X509CertificateHolder} 而不是 JCE {@code Certificate}，
+     * 避免触发 {@code JcaX509CertificateConverter.setProvider("BC")} 走 JCE。
+     * <p>
+     * 适用于 GraalVM native-image 等 JCE provider 注册失败的场景。
+     *
+     * @param plaintext   待签名的原文
+     * @param signature   签名值
+     * @param certHolder  签名使用的证书（X509CertificateHolder / BC 轻量级）
+     * @return SignedData
+     * @throws IOException  ASN.1 编码异常
+     * @since 2.4.0-openpdf.6
+     */
+    public static SignedData signedDataFromHolder(byte[] plaintext,
+                                                  byte[] signature,
+                                                  X509CertificateHolder certHolder) throws IOException {
+        if (plaintext == null || plaintext.length == 0) {
+            throw new IllegalArgumentException("签名原文(plaintext)为空");
+        }
+        if (signature == null || signature.length == 0) {
+            throw new IllegalArgumentException("签名值(signature)为空");
+        }
+        if (certHolder == null) {
+            throw new IllegalArgumentException("证书(certHolder)为空");
+        }
+        // 直接拿 ASN.1 结构（X509CertificateHolder.toASN1Structure() 返回
+        // org.bouncycastle.asn1.x509.Certificate，不需要 JCE conversion）
+        org.bouncycastle.asn1.x509.Certificate asn1Cert = certHolder.toASN1Structure();
+        IssuerAndSerialNumber issuerAndSerialNumber =
+                new IssuerAndSerialNumber(asn1Cert.getIssuer(), asn1Cert.getSerialNumber());
+
+        // 消息摘要算法标识符的集合,固定值 SM3算法
+        ASN1Set digestAlgorithms = new DERSet(new AlgorithmIdentifier(OIDs.sm3));
+        // 待签名的 数据内容
+        ContentInfo contentInfo = new ContentInfo(OIDs.data, new DEROctetString(plaintext));
+        // 证书集
+        ASN1Set certificates = new DERSet(asn1Cert);
+        // 签名者信息
+        SignerInfo signerInfo = new SignerInfo(
+                issuerAndSerialNumber,
+                new AlgorithmIdentifier(OIDs.sm3),
+                new AlgorithmIdentifier(OIDs.sm2Sign),
+                new DEROctetString(signature)
+        );
+        ASN1Set signerInfos = new DERSet(signerInfo);
+        return new SignedData(digestAlgorithms, contentInfo, certificates, signerInfos);
     }
 
     /**
