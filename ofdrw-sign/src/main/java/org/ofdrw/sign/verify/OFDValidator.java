@@ -1,5 +1,6 @@
 package org.ofdrw.sign.verify;
 
+import org.bouncycastle.asn1.gm.GMObjectIdentifiers;
 import org.bouncycastle.crypto.digests.SM3Digest;
 import org.dom4j.DocumentException;
 import org.ofdrw.core.basicType.ST_Loc;
@@ -221,14 +222,18 @@ public class OFDValidator implements Closeable {
     /**
      * 计算文件摘要。SM3 走 {@link GmVerifyHelper#newSm3()}（BC 轻量级 API），
      * 其他算法走 JDK 内置 provider（不再注册 BC provider）。
+     * <p>
+     * 摘要算法名支持：字符串名（"SM3" / "SHA-256" / "SHA-1" / "MD5"）和
+     * OID（"1.2.156.10197.1.401" 是 SM3，"2.16.840.1.101.3.4.2.1" 是 SHA-256）。
      *
      * @param file   待计算文件
-     * @param method 摘要算法名（如 "SM3" / "SHA-256"）
+     * @param method 摘要算法名或 OID
      * @return 摘要值
      * @throws IOException 算法不支持或文件读写异常
      */
     private static byte[] hashFile(Path file, String method) throws IOException {
-        if ("SM3".equalsIgnoreCase(method)) {
+        // 兼容字符串名和 OID 两种写法
+        if ("SM3".equalsIgnoreCase(method) || GMObjectIdentifiers.sm3.getId().equals(method)) {
             SM3Digest d = GmVerifyHelper.newSm3();
             try (InputStream in = Files.newInputStream(file)) {
                 byte[] buf = new byte[8192];
@@ -242,7 +247,19 @@ public class OFDValidator implements Closeable {
             return out;
         }
         try {
-            MessageDigest md = MessageDigest.getInstance(method);
+            // OID 形式（"1.2.156.10197.1.401" 等）转成可读算法名
+            String algorithmName = method;
+            if (method != null && method.matches("^[0-9.]+$")) {
+                // 是 OID，转算法名
+                java.security.MessageDigest tmp;
+                try {
+                    tmp = MessageDigest.getInstance(method);
+                    algorithmName = tmp.getAlgorithm();
+                } catch (NoSuchAlgorithmException ignore) {
+                    // fall through，下面会再抛
+                }
+            }
+            MessageDigest md = MessageDigest.getInstance(algorithmName);
             try (InputStream in = Files.newInputStream(file)) {
                 byte[] buf = new byte[8192];
                 int n;
