@@ -5,15 +5,12 @@ import org.bouncycastle.asn1.cms.Attribute;
 import org.bouncycastle.asn1.cms.AttributeTable;
 import org.bouncycastle.asn1.cms.CMSAttributes;
 import org.bouncycastle.asn1.x509.Certificate;
-import org.bouncycastle.jcajce.provider.digest.SM3;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.util.encoders.Base64;
 import org.ofdrw.gm.cert.CertTools;
 
 import java.io.IOException;
 import java.security.GeneralSecurityException;
-import java.security.MessageDigest;
-import java.security.Signature;
 import java.util.Arrays;
 
 /**
@@ -32,14 +29,16 @@ public class GBT35275Validate {
     /**
      * 验证 GBT35275 SignedData数据
      *
-     * @param alg         算法
+     * @param alg         算法（保留参数；自 2.4.0-openpdf.5 起，验签统一走 SM2Signer，
+     *                    本参数当前不影响行为；保留以兼容外部调用方）
      * @param tbsContent  待签名数据原文，不需要提前计算摘要
      * @param signedValue 签名值DER编码
      * @return 验证结果
      * @throws GeneralSecurityException 签名计算法错误
+     * @throws IOException              证书解析失败
      */
     public static VerifyInfo validate(String alg, byte[] tbsContent, byte[] signedValue)
-            throws GeneralSecurityException {
+            throws GeneralSecurityException, IOException {
         ContentInfo contentInfo = ContentInfo.getInstance(signedValue);
         if (contentInfo == null) {
             throw new IllegalArgumentException("无法解析ContentInfo结构");
@@ -53,9 +52,8 @@ public class GBT35275Validate {
             throw new IllegalArgumentException("无法解析签名值格式，不符 GBT35275");
         }
         // 计算原文摘要
-        MessageDigest md = new SM3.Digest();
         // a) 根据签名文件中的签名方案，调用杂凑算法计算签名文件的杂凑值。
-        byte[] digestAct = md.digest(tbsContent);
+        byte[] digestAct = GmVerifyHelper.sm3(tbsContent);
         byte[] plaintext = null;
 
         final ASN1Encodable dataContent = signedData.getContentInfo().getContent();
@@ -109,13 +107,16 @@ public class GBT35275Validate {
             if (c == null) {
                 return VerifyInfo.Err("没有找到匹配的证书无法验证签名");
             }
-            final java.security.cert.Certificate cert = CertTools.obj(c);
-            Signature sg = Signature.getInstance(alg, new BouncyCastleProvider());
-            sg.initVerify(cert.getPublicKey());
-            sg.update(plaintext);
+            // 走 BC 轻量级 API：objHolder + SM2Signer，不触发 JCE provider 校验
+            // （native-image GraalVM closed-world 兼容）
+            final X509CertificateHolder holder = CertTools.objHolder(c);
             byte[] signature = signerInfo.getEncryptedDigest().getOctets();
-            if (!sg.verify(signature)) {
-                return VerifyInfo.Err("签名值不一致");
+            try {
+                if (!GmVerifyHelper.sm3WithSm2Verify(holder, plaintext, signature)) {
+                    return VerifyInfo.Err("签名值不一致");
+                }
+            } catch (IOException | GeneralSecurityException e) {
+                return VerifyInfo.Err("签名验证失败: " + e.getMessage());
             }
         }
         return VerifyInfo.OK();

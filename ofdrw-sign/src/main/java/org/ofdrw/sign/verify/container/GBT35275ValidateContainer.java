@@ -5,6 +5,7 @@ import org.ofdrw.gm.sm2strut.*;
 import org.ofdrw.sign.verify.SignedDataValidateContainer;
 import org.ofdrw.sign.verify.exceptions.InvalidSignedValueException;
 
+import java.io.IOException;
 import java.security.GeneralSecurityException;
 
 /**
@@ -24,7 +25,7 @@ public class GBT35275ValidateContainer implements SignedDataValidateContainer {
 
     @Override
     public void validate(SigType type, String alg, byte[] tbsContent, byte[] signedValue)
-            throws InvalidSignedValueException, GeneralSecurityException {
+            throws InvalidSignedValueException, IOException, GeneralSecurityException {
         if (type != SigType.Sign) {
             throw new IllegalArgumentException("签名类型(type)必须是 Sign，不支持电子印章验证");
         }
