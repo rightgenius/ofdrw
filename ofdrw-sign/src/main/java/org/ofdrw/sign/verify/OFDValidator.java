@@ -1,6 +1,6 @@
 package org.ofdrw.sign.verify;
 
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.crypto.digests.SM3Digest;
 import org.dom4j.DocumentException;
 import org.ofdrw.core.basicType.ST_Loc;
 import org.ofdrw.core.signatures.SigType;
@@ -15,6 +15,7 @@ import org.ofdrw.gm.ses.parse.SESVersionHolder;
 import org.ofdrw.gm.ses.parse.VersionParser;
 import org.ofdrw.gm.ses.v4.SES_Signature;
 import org.ofdrw.gm.ses.v4.SESeal;
+import org.ofdrw.gm.sm2strut.GmVerifyHelper;
 import org.ofdrw.pkg.container.OFDDir;
 import org.ofdrw.reader.BadOFDException;
 import org.ofdrw.reader.OFDReader;
@@ -41,8 +42,6 @@ import java.util.List;
  * @since 2020-04-22 10:33:26
  */
 public class OFDValidator implements Closeable {
-
-    private Provider provider;
 
     /**
      * OFD虚拟容器
@@ -74,7 +73,6 @@ public class OFDValidator implements Closeable {
         this.reader = reader;
         ofdDir = reader.getOFDDir();
         rl = reader.getResourceLocator();
-        provider = new BouncyCastleProvider();
     }
 
 
@@ -191,39 +189,70 @@ public class OFDValidator implements Closeable {
 
     /**
      * 检查被保护文件的完整性（是否被篡改）
+     * <p>
+     * 2.4.0-openpdf.5 起改用 BC 轻量级 API（GmVerifyHelper.newSm3），
+     * 不再持有 {@code BouncyCastleProvider} 字段，
+     * 让 {@code ofd-cli} native binary（GraalVM closed-world）下也能跑
+     * {@code OFDValidator}。SHA-1 / SHA-256 / MD5 等仍走 JDK 内置 provider。
      *
      * @param sig 签名描述文件的根节点对象
-     * @throws FileIntegrityException   文件被篡改
-     * @throws NoSuchAlgorithmException 杂凑算法不支持
-     * @throws IOException              文件读写IO异常
+     * @throws FileIntegrityException 文件被篡改
+     * @throws IOException            文件读写IO异常 / 杂凑算法不支持
      */
     private void checkFileIntegrity(Signature sig)
-            throws FileIntegrityException, NoSuchAlgorithmException, IOException {
+            throws FileIntegrityException, IOException {
 
         final SignedInfo signedInfo = sig.getSignedInfo();
         final References references = signedInfo.getReferences();
         final String checkMethod = references.getCheckMethod();
-        // 根据摘要算法名称获取摘要算法
-        MessageDigest md = MessageDigest.getInstance(checkMethod, provider);
         for (Reference ref : references.getReferences()) {
             ST_Loc fileRef = ref.getFileRef();
             Path file = rl.getFile(fileRef);
             // 获取预期的文件杂凑值
             byte[] expectDataHash = ref.getCheckValue();
-            try (InputStream in = Files.newInputStream(file);
-                 DigestInputStream dis = new DigestInputStream(in, md)) {
-                byte[] buffer = new byte[4096];
-                // 根据缓存读入
-                while (dis.read(buffer) > -1) ;
-                // 计算最终文件杂凑值
-                byte[] actualDataHash = md.digest();
-                // 比对杂凑值是否一致
-                if (!Arrays.equals(expectDataHash, actualDataHash)) {
-                    throw new FileIntegrityException(fileRef, expectDataHash, actualDataHash);
+            byte[] actualDataHash = hashFile(file, checkMethod);
+            // 比对杂凑值是否一致
+            if (!Arrays.equals(expectDataHash, actualDataHash)) {
+                throw new FileIntegrityException(fileRef, expectDataHash, actualDataHash);
+            }
+        }
+    }
+
+    /**
+     * 计算文件摘要。SM3 走 {@link GmVerifyHelper#newSm3()}（BC 轻量级 API），
+     * 其他算法走 JDK 内置 provider（不再注册 BC provider）。
+     *
+     * @param file   待计算文件
+     * @param method 摘要算法名（如 "SM3" / "SHA-256"）
+     * @return 摘要值
+     * @throws IOException 算法不支持或文件读写异常
+     */
+    private static byte[] hashFile(Path file, String method) throws IOException {
+        if ("SM3".equalsIgnoreCase(method)) {
+            SM3Digest d = GmVerifyHelper.newSm3();
+            try (InputStream in = Files.newInputStream(file)) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    d.update(buf, 0, n);
                 }
             }
-            // 重置摘要算法
-            md.reset();
+            byte[] out = new byte[d.getDigestSize()];
+            d.doFinal(out, 0);
+            return out;
+        }
+        try {
+            MessageDigest md = MessageDigest.getInstance(method);
+            try (InputStream in = Files.newInputStream(file)) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    md.update(buf, 0, n);
+                }
+            }
+            return md.digest();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IOException("不支持的杂凑算法: " + method, e);
         }
     }
 
