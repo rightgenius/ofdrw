@@ -632,19 +632,6 @@ public class OpenPdfMaker {
         }
         contentStream.saveState();
 
-        // OpenPDF 1.3.39 在 addImage 时，对于带 SMask（PNG alpha）的图片，
-        // BC（backdrop color）默认是黑色（0,0,0），导致 OFD 里印章 / 二维码 /
-        // 红头等含 alpha 通道的图片，透明区域在 PDF 里渲染成黑色。
-        //
-        // PDFBox 的行为是把 BC 设为白色（或让 BC 跟随上层 fill color），
-        // 而 OpenPDF 没有自动同步这个。修法：写入 PDF 前先把 BufferedImage
-        // 合成到白底上，得到一张纯 RGB 的图，OpenPDF 就不会再写 SMask，
-        // 也不会有 BC 问题。
-        //
-        // 副作用：image 原来"透过看下面文字"的 alpha 透明效果变成白底，
-        // 这对发票 / 印章 / 二维码是想要的行为（页面本身是白的）。
-        bufferedImage = compositeOnWhite(bufferedImage);
-
         Integer alpha = imageObject.getAlpha();
         if (alpha != null && alpha < 255) {
             PdfGState gs = new PdfGState();
@@ -652,14 +639,28 @@ public class OpenPdfMaker {
             contentStream.setGState(gs);
         }
 
+        // 关键：对带 alpha 的 PNG，OpenPDF 默认会写 /SMask 软蒙版 + BC（默认黑），
+        // 印章/二维码透明区在 PDF 里渲染成黑（v0.1.4 的 bug）。两种修法：
+        //
+        //   A) compositeOnWhite → 把 alpha 合成到白底 → 印章变实心，把后面的红字遮住
+        //      （v0.1.5 第一版用这个，破坏了印章 alpha 透出底层的语义）
+        //   B) explicit /Mask → 把 alpha 通道提取出来当 mask，主 image 是 RGB only，
+        //      mask=0 区域不画 image 像素 → 透出底层红字（PDF spec 正确做法）
+        //
+        // 用 B 修。
         Image imgObj;
         CT_MultiMedia multiMedia = resMgt.getMultiMedia(resourceID.toString());
         try {
             if (multiMedia != null && "JPEG".equals(multiMedia.getFormat())) {
+                // JPEG 是不透明图，不带 alpha，直接走 OpenPDF 默认路径
                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
                 ImageIO.write(bufferedImage, "JPEG", bos);
                 imgObj = Image.getInstance(bos.toByteArray());
+            } else if (bufferedImage.getColorModel().hasAlpha()) {
+                // 带 alpha：手动构造 RGB 主 image + 灰度 mask image
+                imgObj = buildImageWithExplicitMask(bufferedImage);
             } else {
+                // 不带 alpha：走 OpenPDF 默认路径
                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
                 ImageIO.write(bufferedImage, "PNG", bos);
                 imgObj = Image.getInstance(bos.toByteArray());
@@ -692,19 +693,60 @@ public class OpenPdfMaker {
     }
 
     /**
-     * 把 BufferedImage 合成到白底上，返回纯 RGB 图。
+     * 把带 alpha 通道的 BufferedImage 拆成：
+     *   1) RGB 主 image（不写 SMask、不带 alpha）
+     *   2) 灰度 mask image（用 alpha 通道当 mask）
      *
-     * OpenPDF 1.3.39 在 addImage 时，对 PNG/JPEG 解码出的带 alpha 通道图
-     * 会自动加 /SMask 软蒙版，但 SMask 的 BC（backdrop color）默认是黑色。
-     * 在 OFD 场景下，发票 / 印章 / 二维码等图像的 alpha 区域在 PDF 里
-     * 显示成黑色背景。
+     * PDF 渲染时主 image 用 /Mask reference mask image，
+     * mask=0 区域**不画 image 像素**，自然透出底层（红字、白纸），
+     * 而不是被 SMask BC 默认黑色覆盖。
      *
-     * 解决：先把图合成到白底，得到不透明 RGB 图，再交给 OpenPDF。
-     * OpenPDF 写出去就没有 SMask，也没有 BC 问题。
+     * 这是 PDF spec 11.6.2 推荐的正确做法。
      *
-     * @param src 原始 BufferedImage（可能带 alpha）
-     * @return 合成的 RGB BufferedImage
+     * @param src 原始 BufferedImage（带 alpha）
+     * @return 主 image（已关联 mask，可直接 addImage）
      */
+    private static Image buildImageWithExplicitMask(BufferedImage src) throws IOException {
+        int w = src.getWidth();
+        int h = src.getHeight();
+        byte[] rgbData = new byte[w * h * 3];
+        byte[] alphaData = new byte[w * h];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int argb = src.getRGB(x, y);
+                int a = (argb >>> 24) & 0xff;
+                int i = y * w + x;
+                // 透明区 RGB 强制 0（mask=0 区域不画，值无所谓；显式 0 避免 PNG
+                // 解码器对 alpha=0 区域可能填的奇怪颜色）
+                if (a == 0) {
+                    rgbData[i * 3]     = 0;
+                    rgbData[i * 3 + 1] = 0;
+                    rgbData[i * 3 + 2] = 0;
+                } else {
+                    rgbData[i * 3]     = (byte) ((argb >> 16) & 0xff);
+                    rgbData[i * 3 + 1] = (byte) ((argb >> 8) & 0xff);
+                    rgbData[i * 3 + 2] = (byte) (argb & 0xff);
+                }
+                alphaData[i] = (byte) a;
+            }
+        }
+
+        // 灰度图 mask：1 component, 8 bpc
+        Image maskImage = Image.getInstance(w, h, 1, 8, alphaData);
+        maskImage.makeMask();
+
+        // RGB 主图：3 component, 8 bpc, 不带 SMask
+        Image rgbImage = Image.getInstance(w, h, 3, 8, rgbData);
+        rgbImage.setImageMask(maskImage);
+        return rgbImage;
+    }
+
+    /**
+     * @deprecated 旧修法：把 BufferedImage 合成到白底。问题是印章 alpha 透明区
+     * 变白底后会把后面的红字标题"电子发票（普通发票）"遮住。
+     * 改用 {@link #buildImageWithExplicitMask} 走 explicit /Mask 路径。
+     */
+    @Deprecated
     private static BufferedImage compositeOnWhite(BufferedImage src) {
         if (src == null) {
             return null;
