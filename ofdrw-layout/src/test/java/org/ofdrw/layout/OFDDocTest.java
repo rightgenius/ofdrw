@@ -700,7 +700,7 @@ class OFDDocTest {
      */
     @Test
     void testReplaceText() throws IOException {
-        // 随便找一张电子发票，例如滴滴打车发票的ofd格式，即可测试
+        // 随便找一张电子发票，例如网约车平台的电子发票 ofd，即可测试
         Path srcP = Paths.get("src/test/resources", "1-1.ofd");
         Path outP = Paths.get("target", "test-reaplaced.ofd");
         Path fontFile = Paths.get("src/test/resources", "simhei-cut1.ttf");
@@ -734,8 +734,8 @@ class OFDDocTest {
             Map<String, String> map = new HashMap<>();
             map.put("Evaluation Warning", "Hi, Tom. Welcome to China.");
             map.put("杭州钧硕科技有限公司", "红宇测试有限公司");
-            map.put("滴滴出行科技有限公司", "杭州钧硕科技有限公司");
-            map.put("滴滴信息服务有限公司", "红宇测试有限公司");
+            map.put("某某出行科技有限公司", "杭州钧硕科技有限公司");
+            map.put("某某出行信息服务有限公司", "红宇测试有限公司");
             map.put("重庆呼我出行网络科技有限公司", "红宇测试有限公司");
             map.put("赵笑林", "单红宇");
             docContentReplace.replaceText(map);
