@@ -59,6 +59,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.imageio.ImageIO;
 import java.awt.geom.AffineTransform;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -574,6 +575,13 @@ public class OpenPdfMaker {
             }
             if (hasPath) {
                 contentStream.clip();
+                // OpenPDF 1.3.39 不重置 W 后的 current path（违反 PDF spec 8.5.4）。
+                // 不加 newPath() 的话，clip 路径（通常是 page rect）的 moveTo/lineTo
+                // 会跟后续 path() 写的字符 path 拼到同一个 current path 上，
+                // fill 时按 non-zero winding 算，page rect (CW -1) + char (CCW +1)
+                // = 0 winding → 字符被裁。newPath() 把 clip 路径消耗掉，让
+                // 后续 path 干净开始。
+                contentStream.newPath();
             }
         }
     }
@@ -624,6 +632,19 @@ public class OpenPdfMaker {
         }
         contentStream.saveState();
 
+        // OpenPDF 1.3.39 在 addImage 时，对于带 SMask（PNG alpha）的图片，
+        // BC（backdrop color）默认是黑色（0,0,0），导致 OFD 里印章 / 二维码 /
+        // 红头等含 alpha 通道的图片，透明区域在 PDF 里渲染成黑色。
+        //
+        // PDFBox 的行为是把 BC 设为白色（或让 BC 跟随上层 fill color），
+        // 而 OpenPDF 没有自动同步这个。修法：写入 PDF 前先把 BufferedImage
+        // 合成到白底上，得到一张纯 RGB 的图，OpenPDF 就不会再写 SMask，
+        // 也不会有 BC 问题。
+        //
+        // 副作用：image 原来"透过看下面文字"的 alpha 透明效果变成白底，
+        // 这对发票 / 印章 / 二维码是想要的行为（页面本身是白的）。
+        bufferedImage = compositeOnWhite(bufferedImage);
+
         Integer alpha = imageObject.getAlpha();
         if (alpha != null && alpha < 255) {
             PdfGState gs = new PdfGState();
@@ -668,6 +689,42 @@ public class OpenPdfMaker {
             contentStream.addImage(imgObj, a, b, c, d, e, f);
         }
         contentStream.restoreState();
+    }
+
+    /**
+     * 把 BufferedImage 合成到白底上，返回纯 RGB 图。
+     *
+     * OpenPDF 1.3.39 在 addImage 时，对 PNG/JPEG 解码出的带 alpha 通道图
+     * 会自动加 /SMask 软蒙版，但 SMask 的 BC（backdrop color）默认是黑色。
+     * 在 OFD 场景下，发票 / 印章 / 二维码等图像的 alpha 区域在 PDF 里
+     * 显示成黑色背景。
+     *
+     * 解决：先把图合成到白底，得到不透明 RGB 图，再交给 OpenPDF。
+     * OpenPDF 写出去就没有 SMask，也没有 BC 问题。
+     *
+     * @param src 原始 BufferedImage（可能带 alpha）
+     * @return 合成的 RGB BufferedImage
+     */
+    private static BufferedImage compositeOnWhite(BufferedImage src) {
+        if (src == null) {
+            return null;
+        }
+        // 已经是纯 RGB 且没有 alpha → 不需要合成
+        if (!src.getColorModel().hasAlpha()) {
+            return src;
+        }
+        int w = src.getWidth();
+        int h = src.getHeight();
+        BufferedImage dst = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g2 = dst.createGraphics();
+        try {
+            g2.setColor(Color.WHITE);
+            g2.fillRect(0, 0, w, h);
+            g2.drawImage(src, 0, 0, null);
+        } finally {
+            g2.dispose();
+        }
+        return dst;
     }
 
     private void writeSealImage(PdfContentByte contentStream, ST_Box box, byte[] image, ST_Box sealBox, ST_Box clipBox) throws IOException {
